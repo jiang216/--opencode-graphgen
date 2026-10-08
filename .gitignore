@@ -1,0 +1,9 @@
+/node_modules/
+/.idea/
+/.vscode/
+**/__pycache__/
+*.pyc
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db

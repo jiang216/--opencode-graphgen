@@ -1,0 +1,32 @@
+{
+  "_comment": "graphgen 配置模板（由 --init 实例化）。字段说明见 tools/graphgen-dist/README.md。",
+  "name": "{{NAME}}",
+  "scan": {
+    "roots": ["docs"],
+    "extraFiles": ["AGENTS.md"],
+    "ignore": ["docs/graph.json", "docs/GRAPH.md", "docs/graph.mmd"]
+  },
+  "idPattern": "^([A-Z]+)-(\\d+)$",
+  "prefixes": {},
+  "_comment_prefixes": "CHANGELOG 条目前缀名，如 {\"G\": \"Gizmo\", \"CAM\": \"Camera\"}；lint 会校验未知前缀",
+  "entryFiles": {
+    "docs/CHANGELOG.md": {
+      "heading": "^([A-Z]+-\\d+)\\s*[:：]?\\s*(.+)$",
+      "type": "BUG"
+    }
+  },
+  "_comment_entryFiles": "条目文件（Bug 唯一事实源）。## 标题匹配 heading 正则；type 决定节点类型（BUG）",
+  "refSections": ["相关历史条目"],
+  "checklistHeadings": ["必须保证的功能", "回归清单"],
+  "checklistSourceColumn": "来源",
+  "_comment_checklist": "refSections 内的引用链接 = ref 边；checklistHeadings 内的表格 + 来源列 = checklist 边",
+  "refEntryFiles": ["docs/CHANGELOG.md"],
+  "_comment_refEntryFiles": "ref 边指向的条目文件（相关历史条目链接的目标）",
+  "tableEdges": [],
+  "_comment_tableEdges": "可选：表格→边。示例：AGENTS 源码→文档映射（srcCol/docCol, owns）、README 索引表（linkCol, index）",
+  "output": {
+    "json": "docs/graph.json",
+    "markdown": "docs/GRAPH.md",
+    "mermaid": "docs/graph.mmd"
+  }
+}

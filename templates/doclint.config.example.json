@@ -1,0 +1,58 @@
+{
+  "_comment": "doclint 配置示例（JSON 不支持注释，_comment 仅说明）。复制为 tools/doclint.config.json 后按项目裁剪；规则未启用或缺参数即跳过。",
+  "rules": {
+    "R1": {
+      "enable": true,
+      "roots": ["docs"],
+      "_": "章节编号：roots 下 *.md 编号唯一/层级匹配/兄弟序号连续"
+    },
+    "R2": {
+      "enable": false,
+      "source": "app/admin/view/public/left.html",
+      "doc": ".claude/skills/admin-login.md",
+      "heading": "## 后台菜单结构",
+      "_": "菜单块：source(Hui 风格 <dl>+data-title) vs doc 代码块；组 — 项/项 行"
+    },
+    "R3": {
+      "enable": false,
+      "dir": "data",
+      "doc": ".claude/skills/seed-db.md",
+      "exts": ["sql", "php"],
+      "_": "清单：dir 目录文件 vs doc 反引号文件名（双向差集）"
+    },
+    "R4": {
+      "enable": false,
+      "appRoot": "app",
+      "rootApp": "index",
+      "docs": [".claude/skills/app-overview.md", ".claude/skills/project-overview.md"],
+      "_": "应用：appRoot 下含 controller/ 的目录 vs docs 各路由表 /xxx/"
+    },
+    "R5": {
+      "enable": false,
+      "gitignore": "public/static/.gitignore",
+      "_": "白名单：gitignore 的 ! 例外文件必须存在"
+    },
+    "R6": {
+      "enable": true,
+      "scan": ["AGENTS.md", "docs/**/*.md", ".claude/**/*.md", "*.md"],
+      "ban": [],
+      "sensitiveKeys": ["goods_content_key"],
+      "_": "凭据：scan glob 内禁止密钥赋值/散列；ban=黑名单字面量（如换掉的旧密钥）"
+    },
+    "R7": {
+      "enable": true,
+      "file": "docs/CHANGELOG.md",
+      "idPattern": "^## ([A-Z]+)-(\\d+):",
+      "requireDate": true,
+      "checkSequence": true,
+      "allowMissing": {},
+      "requireHistory": {},
+      "_": "变更日志：条目编号连续（按前缀分组，allowMissing={前缀:[编号]} 白名单历史缺口）、标题带（YYYY-MM-DD）、requireHistory={前缀:起始编号} 起必须含「相关历史条目」"
+    },
+    "markers": {
+      "enable": false,
+      "slices": "tools/doc-slices.json",
+      "_": "生成块：marker 内容 == gen_doc_slice 输出（slice 类型 menu/filelist）"
+    }
+  }
+}

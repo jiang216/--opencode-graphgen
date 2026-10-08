@@ -1,0 +1,9 @@
+#!/bin/sh
+# pre-commit 硬闸：文档漂移校验 + 图谱 lint
+# 启用方式（本仓库 local 配置，不推远程）：git config core.hooksPath tools/git-hooks
+# 绕过（不建议）：git commit --no-verify
+set -e
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+PYTHONIOENCODING=utf-8 python tools/doclint.py
+PYTHONIOENCODING=utf-8 python tools/graphgen.py --check
