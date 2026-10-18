@@ -11,7 +11,8 @@
   3. skills/graphgen/                                        → <target>/.opencode/skills/graphgen/
   4. tools/doclint.py、tools/gen_doc_slice.py                → <target>/tools/
   5. tools/doclint.config.json 不存在时由 templates/doclint.config.example.json 生成
-  6. <target>/.opencode/package.json 保证依赖 @opencode-ai/plugin（缺则建/补）
+  6. <target>/.opencode/package.json 保证依赖 @opencode/plugin（V2，缺则建/补；
+     同时移除 V1 残留依赖 @opencode-ai/plugin）
   7. --hooks: templates/pre-commit → <target>/tools/git-hooks/pre-commit
               且 target 是 git 仓库时设 core.hooksPath=tools/git-hooks
   8. AGENTS.md 追加模板片段（已有 <!-- graphgen:installed --> 标记则跳过）
@@ -29,7 +30,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-PLUGIN_DEP = {"@opencode-ai/plugin": "1.18.7"}
+PLUGIN_DEP = {"@opencode/plugin": "2.0.32"}
+PLUGIN_STALE_DEPS = ("@opencode-ai/plugin",)
 MARKER = "<!-- graphgen:installed -->"
 
 
@@ -77,6 +79,13 @@ def ensure_package_json(target: Path) -> str:
         if k not in deps:
             deps[k] = v
             changed = True
+    for k in PLUGIN_STALE_DEPS:
+        if k in deps:
+            del deps[k]
+            changed = True
+    if not data["dependencies"]:
+        data.pop("dependencies", None)
+        changed = True
     if changed:
         pkg.parent.mkdir(parents=True, exist_ok=True)
         pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

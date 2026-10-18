@@ -1,7 +1,8 @@
 # graphgen 分发包
 
-通用 markdown 文档知识图谱生成器（Obsidian 式正反链），可分发到任意项目。由 openfbx 项目
-（`tools/graphgen.py` + `tools/graphgen-dist/`）维护发布。
+通用 markdown 文档知识图谱生成器（Obsidian 式正反链），可分发到任意项目。由本仓库维护发布：
+源码、安装器与文档都在这里（消费方只经 `python install.py --target <项目>` 更新），
+`dist/opencode-graphgen-<版本>.zip` 为整体打包的分发件。
 
 本包**自包含**：含引擎 + 配置模板 + opencode 增强 + 安装文档，整体拷走即可在任何项目安装。
 **安装步骤见 `INSTALL.md`**，本文档为概述与配置字段参考。
@@ -38,7 +39,7 @@ python <包目录>\graphgen.py --init <目标目录> [--name 项目名]
 | `<目标>/tools/graphgen.config.json` | 从模板实例化（`{{NAME}}` 替换为项目名） |
 | `<目标>/.opencode/skills/graphgen/SKILL.md` | opencode 技能（可选增强） |
 | `<目标>/.opencode/plugins/graphgen-watch.ts` | 插件：文件事件自动重生成 + `graphgen_query` 工具（可选增强） |
-| `<目标>/.opencode/package.json` | `@opencode-ai/plugin` 依赖（仅当不存在时写入） |
+| `<目标>/.opencode/package.json` | `@opencode/plugin`（V2）依赖（仅当不存在时写入；供编辑器类型检查） |
 | `<目标>/AGENTS.md` | 无则自动创建；已有则幂等追加（marker 防重复）。内含中文汇报 + 改动工作流（读模块文档/错误日志防复发）+ 图谱同步三段规则 |
 | `<目标>/tools/graphgen-dist/` | README + INSTALL 参考副本 |
 
@@ -87,13 +88,15 @@ python <包目录>\graphgen.py --init <目标目录> [--name 项目名]
 ## opencode 增强（可选）
 
 `--init` 已自动接入。若手动拷贝，只需把 `skill-graphgen.md`、`plugin-graphgen-watch.ts` 放入
-`<目标>/.opencode/skills/graphgen/SKILL.md`、`<目标>/.opencode/plugins/graphgen-watch.ts`，
-并确保 `<目标>/.opencode/package.json` 含 `@opencode-ai/plugin` 依赖（opencode 启动时自动
-`bun install`）。插件行为：
+`<目标>/.opencode/skills/graphgen/SKILL.md`、`<目标>/.opencode/plugins/graphgen-watch.ts`。
+插件为 **opencode V2 插件 API**（`Plugin.define`，需 opencode ≥ 2.0）。运行时 `@opencode/plugin` 由
+opencode 自行解析，`<目标>/.opencode/package.json` 的 `@opencode/plugin` 依赖声明仅供编辑器
+类型检查（V2 不会自动 `bun install`）。插件行为：
 
-- 监听 `file.watcher.updated` / `file.edited`，白名单：`docs/**`（排除 `docs/graph.*` 防自触发）、
+- 监听 `filesystem.changed`（兼容 `file.edited`），白名单：`docs/**`（排除 `docs/graph.*` 防自触发）、
   `AGENTS.md`、`.opencode/skills/*/SKILL.md`、`tools/graphgen.config.json`，1.5s 去抖后自动重生成。
-- 注册 `graphgen_query` 工具（action=query / generate / check）。
+- 注册 `graphgen_query` 工具（action=query / generate / check / doclint）。
+- compaction 摘要请求注入“graphgen_query 保持可用”提示，卸载时中止事件流并清理定时器。
 
 ## 约定（引擎默认支持的文档规范）
 
@@ -108,12 +111,25 @@ python <包目录>\graphgen.py --init <目标目录> [--name 项目名]
 > 通过 `bootstrap/install-bootstrap.ps1`（Windows）或 `bootstrap/install-bootstrap.sh`（Unix）安装。
 > 其作用是让「项目里出现 `graphgen-dist/` 即自动安装」，由智能体/插件读取本包后自助完成 `--init`。
 
-## 维护说明（openfbx 内部）
+## 维护说明（dist 镜像同步）
 
-- `skill-graphgen.md` / `plugin-graphgen-watch.ts` 是 `.opencode/skills/graphgen/SKILL.md` 与
-  `.opencode/plugins/graphgen-watch.ts` 的**镜像**（通用版），改 live 文件后必须同步回 dist：
-  `Copy-Item .opencode\skills\graphgen\SKILL.md tools\graphgen-dist\skill-graphgen.md; Copy-Item .opencode\plugins\graphgen-watch.ts tools\graphgen-dist\plugin-graphgen-watch.ts`
-- `graphgen.py` 是 `tools/graphgen.py` 的**镜像副本**（供自包含分发/`--init`），改引擎后必须同步：
-  `Copy-Item tools\graphgen.py tools\graphgen-dist\graphgen.py`
-- `--init` 从**自身**（`__file__`）复制引擎：若直接跑 `tools/graphgen.py`，安装的是最新引擎；若从 dist 跑，则安装的是 dist 内副本——务必保持上述镜像同步。
-- `bootstrap/` 为 dist 独有（openfbx 的 `.opencode/` 下无对应 live 文件），改动时直接编辑 `tools/graphgen-dist/bootstrap/` 即可。
+- 分发资产的**源**都在本仓库：`skills/graphgen/SKILL.md`、`src/index.ts`、`tools/graphgen.py`、
+  `tools/graphgen.config.template.json`、`templates/agents-snippet.md`、`bootstrap/`。
+- 消费方 live 文件（`.opencode/` 下技能/插件、`tools/graphgen.py` 等）只经
+  `python install.py --target <项目>` 更新，不手改。
+- 各项目 `tools/graphgen-dist/` 是供 `graphgen.py --init` 自包含分发的**镜像**（仓库改完后手动同步一次，
+  以仓库路径为源）：
+
+```powershell
+Copy-Item skills\graphgen\SKILL.md <项目>\tools\graphgen-dist\skill-graphgen.md
+Copy-Item src\index.ts <项目>\tools\graphgen-dist\plugin-graphgen-watch.ts
+Copy-Item tools\graphgen.py <项目>\tools\graphgen-dist\graphgen.py
+Copy-Item tools\graphgen.config.template.json <项目>\tools\graphgen-dist\
+Copy-Item templates\agents-snippet.md <项目>\tools\graphgen-dist\AGENTS-snippet.md
+Copy-Item bootstrap\* <项目>\tools\graphgen-dist\bootstrap\ -Recurse -Force
+```
+
+- `--init` 从**自身**（`__file__`）复制引擎：若直接跑项目内 `tools/graphgen.py`，安装的是最新引擎；
+  若从 dist 跑，则安装的是 dist 内副本——务必保持上述镜像同步。
+- 仓库有改动后需重新打包 `dist/opencode-graphgen-<版本>.zip`；解压并改名为 `graphgen-dist/` 放入
+  项目根，即触发全局引导器按 `install.py` 自动安装（V2 依赖）。

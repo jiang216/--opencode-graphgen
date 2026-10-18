@@ -17,10 +17,10 @@
     "README.md"
   ],
   "dependencies": {
-    "@opencode-ai/plugin": "1.18.7"
+    "@opencode/plugin": "2.0.32"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --strict --skipLibCheck --module preserve --moduleResolution bundler --target es2022 src/index.ts"
+    "typecheck": "tsc --noEmit --strict --skipLibCheck --module preserve --moduleResolution bundler --target es2022 src/index.ts bootstrap/plugin-graphgen-bootstrap.ts"
   },
   "license": "UNLICENSED",
   "private": true,

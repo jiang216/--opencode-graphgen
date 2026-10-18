@@ -668,7 +668,7 @@ def emit_mermaid(edges: list) -> str:
 
 INSTALL_MARKER = "<!-- graphgen:installed -->"
 DIST_DIR_NAME = "graphgen-dist"
-PLUGIN_PKG_VERSION = "1.18.7"
+PLUGIN_PKG_VERSION = "2.0.32"
 
 
 def find_dist_dir() -> Path | None:
@@ -731,11 +731,11 @@ def cmd_init(target: str, name: str | None) -> int:
             pkg = occ / "package.json"
             if not pkg.exists():
                 pkg.write_text(
-                    '{\n  "dependencies": {\n    "@opencode-ai/plugin": "' + PLUGIN_PKG_VERSION + '"\n  }\n}\n',
+                    '{\n  "dependencies": {\n    "@opencode/plugin": "' + PLUGIN_PKG_VERSION + '"\n  }\n}\n',
                     encoding="utf-8",
                 )
                 written.append(to_posix(pkg))
-            print(f"[graphgen] opencode 接入完成（skill/plugin/package.json）；opencode 启动时会自动 bun install")
+            print(f"[graphgen] opencode 接入完成（skill/plugin/package.json）；@opencode/plugin 运行时由 opencode 解析")
 
         dist_readme = dist / "README.md"
         for doc_name in ("README.md", "INSTALL.md"):

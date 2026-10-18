@@ -3,7 +3,7 @@ import * as path from "node:path"
 import { readFile } from "node:fs/promises"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { type Plugin, tool } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
 
 const exec = promisify(execFile)
 
@@ -81,95 +81,106 @@ function lookupNode(
   return null
 }
 
-export const GraphgenWatchPlugin: Plugin = async ({ directory, worktree, client }) => {
-  let timer: ReturnType<typeof setTimeout> | null = null
-  let running = false
-  let pending = false
+export default Plugin.define({
+  id: "graphgen-watch",
+  async setup(ctx) {
+    // 插件实例所在位置（worktree 场景下即 worktree 根）
+    const root = ctx.location.directory
 
-  const regen = async (root: string) => {
-    if (running) {
-      pending = true
-      return
-    }
-    running = true
-    try {
-      const out = await runGraphgen(root, false)
-      await client.app.log({
-        body: {
-          service: "graphgen-watch",
-          level: "info",
-          message: "docs graph regenerated",
-          extra: { output: out.slice(0, 400) },
-        },
-      })
-    } catch (err) {
-      await client.app.log({
-        body: {
-          service: "graphgen-watch",
-          level: "warn",
-          message: `graphgen failed: ${String(err)}`,
-        },
-      })
-    } finally {
-      running = false
-      if (pending) {
-        pending = false
-        regen(root)
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let running = false
+    let pending = false
+
+    const regen = async () => {
+      if (running) {
+        pending = true
+        return
+      }
+      running = true
+      try {
+        const out = await runGraphgen(root, false)
+        console.log(`[graphgen-watch] docs graph regenerated\n${out.slice(0, 400)}`)
+      } catch (err) {
+        console.warn(`[graphgen-watch] graphgen failed: ${String(err)}`)
+      } finally {
+        running = false
+        if (pending) {
+          pending = false
+          void regen()
+        }
       }
     }
-  }
 
-  const scheduleRegen = (root: string) => {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => {
-      timer = null
-      regen(root)
-    }, 1500)
-  }
+    const scheduleRegen = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        void regen()
+      }, 1500)
+    }
 
-  return {
-      dispose: async () => {
-        if (timer) clearTimeout(timer)
-      },
+    // 文件变更 → 防抖重建图谱。
+    // V2 公开事件为 filesystem.changed（data: {file, event}）；file.edited 仍存在于
+    // 服务端事件清单（data: {file}）但客户端类型未导出，这里做防御性兼容。
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        for await (const raw of ctx.event.subscribe({ signal: controller.signal })) {
+          const event = raw as unknown as { type: string; data?: { file?: unknown } }
+          if (event.type !== "filesystem.changed" && event.type !== "file.edited") continue
+          const file = event.data?.file
+          if (typeof file !== "string") continue
+          const rel = normalizeRel(root, file)
+          if (!rel || !isWatchTarget(rel)) continue
+          scheduleRegen()
+        }
+      } catch (err) {
+        console.warn(`[graphgen-watch] event stream ended: ${String(err)}`)
+      }
+    })()
 
-    event: async ({ event }) => {
-      if (event.type !== "file.watcher.updated" && event.type !== "file.edited") return
-      const file = event.properties.file
-      const root = worktree ?? directory
-      if (!root) return
-      const rel = normalizeRel(root, file)
-      if (!rel || !isWatchTarget(rel)) return
-      scheduleRegen(root)
-    },
-
-    tool: {
-      graphgen_query: tool({
+    // graphgen_query 工具（query/generate/check/doclint）
+    await ctx.tool.transform((editor) => {
+      editor.add({
+        name: "graphgen_query",
         description:
           "文档图谱查询/生成（graphgen）+ 文档漂移校验（doclint）。action=query: 按节点 id（如 BUG:XX-###、DOC:xxx、SKILL:xxx、META:AGENTS）读 docs/graph.json 的正反链；action=generate: 重新生成 docs/graph.json|GRAPH.md|graph.mmd；action=check: 只做 lint 校验（有错 exit 1）；action=doclint: 跑 tools/doclint.py 文档漂移机械校验（R1-R7+生成块，有错 exit 1）。图谱由 tools/graphgen.py 生成，GRAPH.md 禁手改。",
-        args: {
-          action: tool.schema.enum(["query", "generate", "check", "doclint"]),
-          node: tool.schema.string().optional().describe("query 用：节点 id 或简称，如 G-004"),
+        input: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["query", "generate", "check", "doclint"],
+              description:
+                "query=查正反链; generate=重新生成图谱; check=lint 校验; doclint=文档漂移机械校验",
+            },
+            node: {
+              type: "string",
+              description: "query 用：节点 id 或简称，如 G-004",
+            },
+          },
+          required: ["action"],
+          additionalProperties: false,
         },
-        async execute(args, context) {
-          const root = context.worktree ?? context.directory
+        execute: async (input) => {
+          const args = input as { action: "query" | "generate" | "check" | "doclint"; node?: string }
           const graphPath = path.join(root, OUTPUT_REL)
           if (args.action === "doclint") {
             const out = await runDoclint(root)
             const failed = /error\(s\)/.test(out) || /^doclint: 找不到配置/m.test(out)
             if (failed) throw new Error(out.trim())
-            return { title: "doclint", output: out.trim() }
+            return { content: out.trim() }
           }
           if (args.action === "generate" || args.action === "check") {
             const out = await runGraphgen(root, args.action === "check")
             if (args.action === "generate" && !existsSync(graphPath)) {
               throw new Error(`generate 后未发现 ${graphPath}，输出:\n${out}`)
             }
-            return { title: `graphgen ${args.action}`, output: out.trim() }
+            return { content: out.trim() }
           }
           if (!existsSync(graphPath)) {
             return {
-              title: "graphgen query",
-              output: `缺少 ${OUTPUT_REL}，请先运行生成（action=generate 或 python tools/graphgen.py）。`,
+              content: `缺少 ${OUTPUT_REL}，请先运行生成（action=generate 或 python tools/graphgen.py）。`,
             }
           }
           const graph = JSON.parse(await readFile(graphPath, "utf-8"))
@@ -177,8 +188,7 @@ export const GraphgenWatchPlugin: Plugin = async ({ directory, worktree, client 
           const nid = lookupNode(graph, wanted)
           if (!nid) {
             return {
-              title: "graphgen query",
-              output: `未找到节点「${wanted}」。可用前缀：BUG:/DOC:/SKILL:/META:/SRC:。`,
+              content: `未找到节点「${wanted}」。可用前缀：BUG:/DOC:/SKILL:/META:/SRC:。`,
             }
           }
           const node = graph.nodes[nid]
@@ -198,13 +208,16 @@ export const GraphgenWatchPlugin: Plugin = async ({ directory, worktree, client 
             `出链(${outlinks.length}):`,
             ...(outlinks.length ? fmt(outlinks, "out") : ["  (无)"]),
           ]
-          return { title: `graphgen query: ${nid}`, output: lines.join("\n") }
+          return { content: lines.join("\n") }
         },
-      }),
-    },
+      })
+    })
 
-    "experimental.session.compacting": async (_input, output) => {
-      output.context.push(`## 可用工具（compaction 后必须保持可用）
+    // compaction 摘要请求注入“graphgen_query 必须保持可用”提示
+    await ctx.session.hook("compaction", (event) => {
+      event.system.push({
+        type: "text",
+        text: `## 可用工具（compaction 后必须保持可用）
 
 - **graphgen_query**：文档图谱查询/生成 + 文档漂移校验工具。
   - action=query, node=BUG:X-NNN：查某条目的正反链（支持简称如 g-004）
@@ -215,9 +228,14 @@ export const GraphgenWatchPlugin: Plugin = async ({ directory, worktree, client 
 
 - **skill 工具**：可加载 graphgen 技能（查反链/跑生成器/防漂移的详细指南）。
   当需要查某个条目被哪些文档引用、某份文档的回归清单覆盖哪些条目、
-  或改完文档后确认图谱同步/防漂移通过时，必须使用 graphgen_query 或加载 graphgen 技能。`)
-    },
-  }
-}
+  或改完文档后确认图谱同步/防漂移通过时，必须使用 graphgen_query 或加载 graphgen 技能。`,
+      })
+    })
 
-export default GraphgenWatchPlugin
+    // 插件卸载时：停事件流 + 清防抖定时器（hook/transform 注册由 opencode 自动回收）
+    return () => {
+      controller.abort()
+      if (timer) clearTimeout(timer)
+    }
+  },
+})

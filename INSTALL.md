@@ -22,7 +22,7 @@
 
 - **Python 3.10+**（仅用标准库）
 - 目标项目已有 `docs/` 目录，以及一份条目文件（默认 `docs/CHANGELOG.md`）
-- opencode 增强（skill/plugin）**可选**，不装也能用命令行
+- opencode 增强（skill/plugin）**可选**，不装也能用命令行；插件为 opencode **V2 插件 API**（`Plugin.define`，需 opencode ≥ 2.0）
 - Windows 下建议先 `$env:PYTHONIOENCODING='utf-8'` 防中文乱码
 
 ## 3. 安装
@@ -49,7 +49,7 @@ python F:\shiyan\CLion\opencode-graphgen\install.py --target D:\code\myapp --hoo
 | `<目标>/tools/doclint.config.json` | 缺省时由示例生成（按项目裁剪规则开关） |
 | `<目标>/.opencode/plugins/graphgen-watch.ts` | 插件 |
 | `<目标>/.opencode/skills/graphgen/` | 技能（覆盖=同步更新） |
-| `<目标>/.opencode/package.json` | `@opencode-ai/plugin` 依赖（仅缺时补） |
+| `<目标>/.opencode/package.json` | `@opencode/plugin`（V2）依赖声明（仅缺时补，并清除 V1 残留 `@opencode-ai/plugin`；供编辑器类型检查，运行时由 opencode 解析） |
 | `<目标>/tools/git-hooks/pre-commit` + `core.hooksPath` | 仅 `--hooks`：pre-commit 硬闸（doclint + graphgen --check） |
 | `<目标>/AGENTS.md` | 无则创建；已有且无安装标记则追加工作流片段（含防漂移配对表） |
 
@@ -64,7 +64,7 @@ Copy-Item <仓库>\templates\doclint.config.example.json <目标>\tools\doclint.
 # 3. 可选增强：技能 + 插件 + 依赖声明
 #    <目标>\.opencode\skills\graphgen\SKILL.md            ← skills/graphgen/SKILL.md
 #    <目标>\.opencode\plugins\graphgen-watch.ts          ← src/index.ts
-#    <目标>\.opencode\package.json 加 {"dependencies": {"@opencode-ai/plugin": "1.18.7"}}
+#    <目标>\.opencode\package.json 加 {"dependencies": {"@opencode/plugin": "2.0.32"}}   # 编辑器类型检查用；运行时 opencode 自行解析 @opencode/plugin
 # 4. 可选：templates\agents-snippet.md 追加到 <目标>\AGENTS.md；templates\pre-commit → tools/git-hooks/
 # 5. 首次生成（必需）
 cd <目标>
@@ -88,7 +88,7 @@ sh <仓库>/bootstrap/install-bootstrap.sh
 装好后的使用方式：
 
 1. 把包整个文件夹复制进目标项目（放根目录或 `tools/` 下均可）。
-2. 用 opencode 打开该项目。**插件**会在启动时自动完成安装（日志 `service=graphgen-bootstrap`）；失败则**智能体**按引导技能自助安装。
+2. 用 opencode 打开该项目。**插件**会在启动时自动完成安装（输出出现 `[graphgen-bootstrap]`）；失败则**智能体**按引导技能自助安装。
 3. 安装后项目根生成/追加 `AGENTS.md`：**中文汇报**、**改动工作流**、**图谱同步**、**文档防漂移** 四段规则。
 4. 首次配置 `tools/graphgen.config.json` 的 `prefixes` 与 `tools/doclint.config.json` 规则开关，跑 `--check` / `doclint` 验证。
 5. 重启 opencode，技能/插件生效。
@@ -121,7 +121,7 @@ python tools\doclint.py            # 期望 doclint: OK
 opencode 内验证（装了插件后**重启 opencode**）：
 
 - 工具 `graphgen_query`：`action=check` / `action=query node=BUG:xxx`（支持简称 `g-004`）/ `action=generate` / `action=doclint`
-- 修改任一 `docs/*.md` → 约 1.5s 后自动重生成（日志 `service=graphgen-watch`）
+- 修改任一 `docs/*.md` → 约 1.5s 后自动重生成（输出出现 `[graphgen-watch]`）
 
 ## 6. 卸载
 
@@ -135,6 +135,6 @@ opencode 内验证（装了插件后**重启 opencode**）：
 - **中文乱码**：先 `$env:PYTHONIOENCODING='utf-8'`。
 - **`--check` 报「未知前缀」**：在 `prefixes` 补前缀，或修正 CHANGELOG 标题。
 - **产物文件名冲突**：产物固定 `docs/GRAPH.md`（大写）。功能文档**勿用 `graph.md`**（Windows 大小写不敏感时与产物同文件）。
-- **插件不生效**：确认 `.opencode/package.json` 含 `@opencode-ai/plugin`，并重启 opencode（自动 `bun install`）。
+- **插件不生效**：确认 `.opencode/plugins/graphgen-watch.ts` 存在且为 V2 格式（`Plugin.define`），重启 opencode；`@opencode/plugin` 运行时由 opencode 自行解析，V2 **不会**自动 `bun install` `.opencode/package.json`（该依赖声明仅供编辑器类型检查）。
 - **doclint 找不到配置**：`tools/doclint.config.json` 缺失，从 `templates/doclint.config.example.json` 拷贝，或用 `--config` 指定。
 - **引擎版本同步**：本仓库 `tools/graphgen.py` 是唯一事实源；消费项目一律经 `install.py` 更新，勿在消费方手改。
