@@ -286,13 +286,24 @@ class GraphBuilder:
             return None
 
     def node_from_target(self, target: str, from_file: str) -> tuple[str | None, str | None]:
-        """Resolve a markdown link target to (node_id, anchor) relative to from_file."""
+        """Resolve a markdown link target to (node_id, anchor) relative to from_file.
+
+        指向**条目文件**（entryFiles，如 docs/CHANGELOG.md）的链接：
+        - 带锚点（`CHANGELOG.md#g-002-...`）→ 直接解析到对应条目节点 `BUG:G-002`；
+        - 无锚点（`CHANGELOG.md`）→ 落到文件节点（若注册了）或 None。
+        条目文件自身不注册为 META 节点（_register_nodes 对 entry_files 会 continue），
+        故带锚点的链接不能返回未注册的 `META:<stem>`，否则锚点校验一律误报「锚点不存在」。
+        """
         base, _, anchor = target.partition("#")
         if not base:
             return None, anchor
         abs_target = self.resolve_target_file(target, from_file)
         if abs_target is None:
             return None, anchor
+        if abs_target in self.entry_files and anchor:
+            bug_id = self._bug_id_by_anchor(anchor)
+            if bug_id:
+                return f"BUG:{bug_id}", None
         if abs_target in self.files:
             return self.resolve_node_id(abs_target), anchor
         # may be a raw file we didn't scan (e.g. tools/*.py) -> check existence
@@ -348,6 +359,8 @@ class GraphBuilder:
             if not pf:
                 self.errors.append(f"entry file not found: {path}")
                 continue
+            # 条目文件本体也登记为 META 节点（ref/mention 边需要它有声明，否则边指向空节点）
+            self.add_node(f"META:{Path(path).stem}", "META", Path(path).stem, path)
             regex = re.compile(entry_cfg.get("heading", r"^([A-Z]+-\d+)\s*[:：]?\s*(.+)$"))
             ntype = entry_cfg.get("type", "BUG")
             for h in pf.headings:
@@ -394,10 +407,13 @@ class GraphBuilder:
             for link in pf.links:
                 is_ref = any(k in link.section for k in ref_sections)
                 node_id, anchor = self.node_from_target(link.target, path)
+                # ref 路径需要“原始锚点”：node_from_target 对条目文件带锚点链接会返回 None 锚点
+                # （已解析成 BUG:* 节点），故这里直接从 link.target 再取一次，保证 ref 边不丢。
+                raw_anchor = link.target.partition("#")[2] or None
                 target_file = self.resolve_target_file(link.target, path)
                 ref_entry = target_file if (target_file and target_file in ref_entry_files) else ""
                 if is_ref and ref_entry:
-                    bug_id = self._bug_id_by_anchor(anchor)
+                    bug_id = self._bug_id_by_anchor(raw_anchor)
                     if bug_id is None:
                         self.errors.append(f"{path}:{link.line} 相关历史条目引用了 {ref_entry} 不存在的锚点: {link.target}")
                         continue
@@ -426,10 +442,27 @@ class GraphBuilder:
         return None
 
     def _anchor_exists(self, node_id: str, anchor: str) -> bool:
+        """Does `anchor` name a heading in the document behind `node_id`?
+
+        条目文件（entryFiles，如 docs/CHANGELOG.md）只把 §条目 注册成 BUG:* 节点，
+        文件自身不会成为 META:* 节点。若拿到的 node_id 未注册（例如历史写法遗留的
+        `META:CHANGELOG`），回退为“按文件路径查标题”，避免误报「锚点不存在」。
+        """
         node = self.nodes.get(node_id)
-        if not node:
+        path = node["path"] if node else None
+        if path is None:
+            for cand in self.files:
+                if self.resolve_node_id(cand) == node_id:
+                    path = cand
+                    break
+            if path is None:
+                stem = node_id.split(":", 1)[1] if ":" in node_id else node_id
+                for cand in self.files:
+                    if Path(cand).stem == stem:
+                        path = cand
+                        break
+        if path is None:
             return False
-        path = node["path"]
         pf = self.files.get(path)
         if not pf:
             return False
@@ -448,6 +481,12 @@ class GraphBuilder:
 
             # checklist tables inside feature docs
             for tbl in pf.tables:
+                # config-driven table edges (AGENTS mapping, doc index)
+                for te in self.cfg.get("tableEdges", []):
+                    if te.get("file") != path or not any(k in tbl.section for k in te.get("headings", [])):
+                        continue
+                    self._apply_table_edge(te, tbl, src)
+
                 if not any(k in tbl.section for k in checklist_heads):
                     continue
                 try:
@@ -475,12 +514,6 @@ class GraphBuilder:
                         if ctx:
                             context += f" 保证项: {ctx}"
                         self.edge(src, f"BUG:{tok}", "checklist", context=context)
-
-            # config-driven table edges (AGENTS mapping, doc index)
-            for te in self.cfg.get("tableEdges", []):
-                if te.get("file") != path or not any(k in tbl.section for k in te.get("headings", [])):
-                    continue
-                self._apply_table_edge(te, tbl, src)
 
     def _apply_table_edge(self, te: dict, tbl: Table, from_node: str) -> None:
         kind = te.get("kind", "mention")
