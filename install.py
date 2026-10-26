@@ -13,19 +13,22 @@
   5. tools/doclint.config.json 不存在时由 templates/doclint.config.example.json 生成
   6. tools/repo.py（代码仓库适配层）+ tools/repo.config.template.json → <target>/tools/
      <target>/tools/repo.config.json 不存在时由模板生成
-  7. 代码仓库管理（--vcs none 可整步跳过）:
+  7. docs/CHANGELOG.md 缺失时写入一条合法种子条目（DG-001 或已有前缀），
+     并补 prefixes / allowOrphanEntries；entryFiles 未就绪时不写 AGENTS
+  8. 代码仓库管理（--vcs none 可整步跳过）:
      a. 检测 .git/.hg/.svn；已是仓库 → 只体检（分支/HEAD/工作区），绝不重建
      b. 无仓库 + 有 git/hg/svn → 默认自动建库（git init -b main + 播种 .gitignore）
         svn 需 --vcs-remote <URL>，不在本地凭空造库
      c. 无任何 VCS 工具 → 打印安装指引，不失败（--vcs-strict 时退出码 1）
      d. 建库/检出成功 → 生成 docs/repo.json + docs/REPO.md 部署快照、
         docs/repo-links.json 条目↔提交索引，并打开 doclint R8 / graphgen repo 块
-  8. <target>/.opencode/package.json 保证依赖 @opencode/plugin（V2，缺则建/补；
+  9. <target>/.opencode/package.json 保证依赖 @opencode/plugin（V2，缺则建/补；
      同时移除 V1 残留依赖 @opencode-ai/plugin）
-  9. --hooks: templates/pre-commit + templates/commit-msg → <target>/tools/git-hooks/
-               且 target 自身是仓库根时设 core.hooksPath=tools/git-hooks
-               （在父仓库内只装文件，不改父仓库配置）
- 10. AGENTS.md 追加模板片段（已有 <!-- graphgen:installed --> 标记则跳过）
+ 10. --hooks: templates/pre-commit + templates/commit-msg → <target>/tools/git-hooks/
+                且 target 自身是仓库根时设 core.hooksPath=tools/git-hooks
+                （在父仓库内只装文件，不改父仓库配置）
+ 11. AGENTS.md 追加模板片段（已有 <!-- graphgen:installed --> 标记则跳过；
+     entryFiles 未就绪时跳过，避免写入无法执行的工作流）
 
 退出码：0=成功 1=失败（--vcs-strict 且缺 VCS 工具时也算失败）
 """
@@ -34,10 +37,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -49,6 +54,10 @@ SNAPSHOT_JSON = "docs/repo.json"
 SNAPSHOT_MD = "docs/REPO.md"
 LINKS_JSON = "docs/repo-links.json"
 PLUGIN_REL = ".opencode/plugins/graphgen-watch.ts"
+DEFAULT_ENTRY_FILE = "docs/CHANGELOG.md"
+DEFAULT_PREFIX = "DG"
+DEFAULT_PREFIX_LABEL = "变更"
+SEED_TITLE = "接入 graphgen 文档图谱"
 
 
 @dataclass
@@ -90,6 +99,161 @@ def ensure_graphgen_config(target: Path) -> str:
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return f"new   {cfg}（由模板生成, name={target.name}）"
+
+
+def _load_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def _entry_regex(entry_cfg: dict) -> re.Pattern[str]:
+    raw = entry_cfg.get("heading", r"^([A-Z]+-\d+)\s*[:：]?\s*(.+)$")
+    try:
+        return re.compile(str(raw))
+    except re.error:
+        return re.compile(r"^([A-Z]+-\d+)\s*[:：]?\s*(.+)$")
+
+
+def _entry_has_items(path: Path, entry_cfg: dict) -> bool:
+    """条目文件里至少有一个 `##` 标题能匹配 entryFiles.heading。"""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return False
+    entry_re = _entry_regex(entry_cfg)
+    for line in text.splitlines():
+        m = re.match(r"^##\s+(.+)$", line.strip())
+        if m and entry_re.match(m.group(1)):
+            return True
+    return False
+
+
+def _entry_prefixes(text: str) -> list[str]:
+    return sorted(set(re.findall(r"^##\s+([A-Z]+)-\d+\s*[:：]", text, re.M)))
+
+
+def _ensure_seed_prefix(cfg: dict, text: str) -> str:
+    """补默认前缀；已有条目则优先沿用条目里的前缀。返回种子条目应使用的前缀。"""
+    prefixes = cfg.get("prefixes")
+    if not isinstance(prefixes, dict):
+        prefixes = {}
+    for prefix in _entry_prefixes(text):
+        prefixes.setdefault(
+            prefix, DEFAULT_PREFIX_LABEL if prefix == DEFAULT_PREFIX else prefix
+        )
+    if not prefixes:
+        prefixes[DEFAULT_PREFIX] = DEFAULT_PREFIX_LABEL
+    cfg["prefixes"] = prefixes
+    if DEFAULT_PREFIX in prefixes:
+        return DEFAULT_PREFIX
+    return sorted(prefixes)[0]
+
+
+def ensure_docs_scaffold(target: Path) -> tuple[list[str], dict]:
+    """首次部署先落一个合法条目文件，避免 AGENTS 规则先于数据落地。
+
+    只创建缺失的 `docs/CHANGELOG.md`；已有文件绝不覆盖/追加。返回
+    `(logs, docs_info)`，`docs_info["ready"]` 表示所有 entryFiles 都存在且有合法条目。
+    """
+    logs: list[str] = []
+    info: dict = {
+        "ready": False,
+        "entryFiles": [],
+        "missingEntryFiles": [],
+        "invalidEntryFiles": [],
+        "seedEntry": None,
+        "seeded": False,
+    }
+    cfg_path = target / "tools" / "graphgen.config.json"
+    if not cfg_path.is_file():
+        logs.append(f"warn  {cfg_path} 缺失，跳过文档种子")
+        return logs, info
+    try:
+        cfg = _load_json(cfg_path)
+    except (OSError, UnicodeError, json.JSONDecodeError) as e:
+        logs.append(f"warn  {cfg_path} 读取失败：{e}；跳过文档种子")
+        return logs, info
+    entry_files = cfg.get("entryFiles")
+    if not isinstance(entry_files, dict) or not entry_files:
+        logs.append("skip  文档种子（配置未声明 entryFiles）")
+        info["ready"] = True
+        return logs, info
+
+    info["entryFiles"] = list(entry_files)
+    before = json.dumps(cfg, ensure_ascii=False, sort_keys=True)
+    text = ""
+
+    seed_cfg = entry_files.get(DEFAULT_ENTRY_FILE)
+    if isinstance(seed_cfg, dict):
+        seed_path = target / DEFAULT_ENTRY_FILE
+        if seed_path.is_file():
+            try:
+                text = seed_path.read_text(encoding="utf-8-sig")
+            except (OSError, UnicodeError) as e:
+                logs.append(f"warn  {seed_path} 读取失败：{e}")
+            if _entry_has_items(seed_path, seed_cfg):
+                logs.append(f"skip  {seed_path}（已存在合法条目）")
+            else:
+                logs.append(
+                    f"warn  {seed_path} 存在但未匹配到条目；不覆盖，请手工补一条或删除后重跑"
+                )
+            _ensure_seed_prefix(cfg, text)
+        else:
+            prefix = _ensure_seed_prefix(cfg, text)
+            seed_id = f"{prefix}-001"
+            today = date.today().isoformat()
+            seed_path.parent.mkdir(parents=True, exist_ok=True)
+            seed_path.write_text(
+                f"""# 变更日志
+
+<!-- 条目格式：## <前缀>-001: 标题（YYYY-MM-DD） -->
+
+## {seed_id}: {SEED_TITLE}（{today}）
+
+- 首次部署自动创建，作为文档图谱的种子条目。
+- 后续功能/修复按同一格式追加；提交前运行 `python tools/graphgen.py --check` 与 `python tools/doclint.py`。
+
+### 相关历史条目
+
+- 无（首条）
+""",
+                encoding="utf-8",
+            )
+            allow = cfg.get("allowOrphanEntries")
+            if isinstance(allow, str):
+                allow = [allow]
+            elif not isinstance(allow, list):
+                allow = []
+            if seed_id not in allow:
+                allow.append(seed_id)
+            cfg["allowOrphanEntries"] = allow
+            info["seedEntry"] = seed_id
+            info["seeded"] = True
+            logs.append(f"new   {seed_path}（种子条目 {seed_id}）")
+
+    missing: list[str] = []
+    invalid: list[str] = []
+    for rel, entry_cfg in entry_files.items():
+        path = target / rel
+        if not path.is_file():
+            missing.append(rel)
+            continue
+        if isinstance(entry_cfg, dict) and not _entry_has_items(path, entry_cfg):
+            invalid.append(rel)
+    info["missingEntryFiles"] = missing
+    info["invalidEntryFiles"] = invalid
+    info["ready"] = not missing and not invalid
+    if missing:
+        logs.append("warn  entryFiles 缺失: " + ", ".join(missing))
+    if invalid:
+        logs.append("warn  entryFiles 无合法条目: " + ", ".join(invalid))
+
+    after = json.dumps(cfg, ensure_ascii=False, sort_keys=True)
+    if after != before:
+        cfg_path.write_text(
+            json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        logs.append(f"upd   {cfg_path}（补默认前缀/种子条目豁免）")
+    return logs, info
 
 
 def ensure_doclint_config(target: Path) -> str:
@@ -439,6 +603,14 @@ def install_project(target: Path, opts: InstallOptions | None = None) -> dict:
 
     logs: list[str] = []
     failed = False
+    docs_info: dict = {
+        "ready": False,
+        "entryFiles": [],
+        "missingEntryFiles": [],
+        "invalidEntryFiles": [],
+        "seedEntry": None,
+        "seeded": False,
+    }
     try:
         logs.append(copy_file(HERE / "tools" / "graphgen.py", target / "tools" / "graphgen.py"))
         logs.append(copy_file(
@@ -469,6 +641,8 @@ def install_project(target: Path, opts: InstallOptions | None = None) -> dict:
             target / "tools" / "repo.config.template.json",
         ))
         logs.append(ensure_repo_config(target))
+        docs_logs, docs_info = ensure_docs_scaffold(target)
+        logs.extend(docs_logs)
         vcs_logs, vcs_rc = ensure_vcs(target, opts)
         logs.extend(vcs_logs)
         if vcs_rc != 0:
@@ -479,6 +653,11 @@ def install_project(target: Path, opts: InstallOptions | None = None) -> dict:
             logs.append("skip  钩子（未加 --hooks）")
         if not opts.agents:
             logs.append("skip  AGENTS.md（--no-agents）")
+        elif not docs_info.get("ready"):
+            logs.append(
+                "skip  AGENTS.md（entryFiles 未就绪；先补 docs/CHANGELOG.md，"
+                "避免写入无法执行的工作流）"
+            )
         else:
             logs.append(append_agents_snippet(target))
     except OSError as e:
@@ -490,6 +669,7 @@ def install_project(target: Path, opts: InstallOptions | None = None) -> dict:
         "target": str(target),
         "logs": logs,
         "summary": _summarize(logs),
+        "docs": docs_info,
         "options": _options_dict(opts),
     }
 

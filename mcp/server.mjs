@@ -59,7 +59,7 @@ function instructions(cfg, version) {
 ## 路由
 
 - **新项目/第一次用**：先 \`graphgen_status\`。\`needsDeploy=true\` 且 \`conflicts=[]\` 时，直接调用 \`graphgen_deploy {target, confirm:true}\`；有冲突时先看 \`conflicts\`，确认后再加 \`force:true\`，不要盲覆盖。
-- **自动初始化**：\`query/repo/verify\` 在项目未部署且无冲突时会先自动部署；有冲突只返回冲突列表，不写盘。空项目同样先部署再继续。
+- **自动初始化**：\`query/repo/verify\` 在项目未部署且无冲突时会先自动部署；有冲突只返回冲突列表，不写盘。空项目同样先部署再继续。首次缺 \`docs/CHANGELOG.md\` 会写入种子条目并补 \`prefixes\`/\`allowOrphanEntries\`；已有条目文件不覆盖。
 - **文档改动**：\`graphgen_query action=generate\` 重生成图谱；提交前 \`graphgen_verify\`。
 - **查条目**：\`graphgen_query action=query node=DG-009\`（支持简称 g-004）。
 - **仓库**：\`graphgen_repo action=status|snapshot|links|guard\`；init 需 confirm；无 VCS 返回 \`not_applicable\`，snapshot 用 \`mode=fs\`。

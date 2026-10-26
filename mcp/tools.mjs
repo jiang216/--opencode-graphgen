@@ -17,7 +17,7 @@ const TOOL_DEFS = [
   {
     name: "status",
     description:
-      "只读体检：本机 graphgen 引擎位置/Python、目标项目是否已装引擎（缺失/过期文件）、配置/技能/AGENTS/VCS/快照/旧插件，并给出 needsDeploy、conflicts 与 suggestedNextActions。",
+      "只读体检：本机 graphgen 引擎位置/Python、目标项目是否已装引擎（缺失/过期文件）、配置/技能/AGENTS/VCS/快照/旧插件，以及 docs.ready / missingEntryFiles。并给出 needsDeploy、conflicts 与 suggestedNextActions。",
     inputSchema: {
       type: "object",
       properties: {
@@ -29,7 +29,7 @@ const TOOL_DEFS = [
   {
     name: "deploy",
     description:
-      "把 graphgen 全家桶部署/同步到目标项目（tools、模板、技能、AGENTS、VCS、快照、可选钩子）。默认只返回计划；confirm=true 才写盘。首次部署先做冲突预检：有冲突返回 needsConfirm=true，确认后加 force=true；只做增量复制/建配置，不删除、不提交、不 push。",
+      "把 graphgen 全家桶部署/同步到目标项目（tools、模板、技能、AGENTS、VCS、快照、可选钩子）。默认只返回计划；confirm=true 才写盘。首次部署先做冲突预检：有冲突返回 needsConfirm=true，确认后加 force=true；只做增量复制/建配置，不删除、不提交、不 push。缺 docs/CHANGELOG.md 时写入合法种子条目并补 prefixes/allowOrphanEntries；已有条目文件不覆盖。",
     inputSchema: {
       type: "object",
       properties: {
@@ -55,7 +55,7 @@ const TOOL_DEFS = [
   {
     name: "query",
     description:
-      "文档图谱：query=按节点 id/简称查正反链；generate=重生成 docs/graph.json|GRAPH.md|graph.mmd；check=lint（有错 exit 1）；doclint=文档漂移机械校验。缺引擎时会先自动部署。",
+      "文档图谱：query=按节点 id/简称查正反链；generate=重生成 docs/graph.json|GRAPH.md|graph.mmd；check=lint（有错 exit 1）；doclint=文档漂移机械校验。缺引擎时先自动部署；entryFiles 未就绪返回 needsDocs（不抛裸 Python 错误）。",
     inputSchema: {
       type: "object",
       properties: {
@@ -220,6 +220,28 @@ export function buildTools(cfg, version) {
             `graphgen_query {action:"generate", root:${JSON.stringify(root)}}  # 部署后生成图谱`,
           );
         }
+        if (!info.docs?.ready) {
+          const missing = info.docs?.missingEntryFiles || [];
+          const invalid = info.docs?.invalidEntryFiles || [];
+          const nonDefaultMissing = missing.filter(
+            (rel) => rel !== "docs/CHANGELOG.md",
+          );
+          if (nonDefaultMissing.length) {
+            suggestedNextActions.push(
+              `手动创建 entryFiles: ${nonDefaultMissing.join(", ")}（或修改 tools/graphgen.config.json）后再 generate`,
+            );
+          }
+          if (invalid.length) {
+            suggestedNextActions.push(
+              `entryFiles 无合法条目: ${invalid.join(", ")}；手工补 ## ID: 标题（YYYY-MM-DD）后再 generate`,
+            );
+          }
+        }
+        if (info.docs?.ready && !info.docs?.graph && !info.needsDeploy) {
+          suggestedNextActions.push(
+            `graphgen_query {action:"generate", root:${JSON.stringify(root)}}  # 生成图谱`,
+          );
+        }
         if ((!vcs || (typeof vcs === "object" && !vcs.vcs)) && !hasVcsMarker) {
           suggestedNextActions.push(
             "无 VCS：repo status 返回 not_applicable；需要文件快照时用 graphgen_deploy（snapshot=true）",
@@ -315,6 +337,26 @@ export function buildTools(cfg, version) {
       case "query": {
         const { root, bootstrap } = await prepare(cfg, args.root);
         const action = args.action;
+        if (["generate", "check", "doclint"].includes(action)) {
+          const project = inspectProject(cfg, root);
+          if (!project.docs?.ready) {
+            const missing = project.docs?.missingEntryFiles || [];
+            const invalid = project.docs?.invalidEntryFiles || [];
+            return {
+              ok: false,
+              action,
+              root,
+              bootstrap,
+              needsDocs: true,
+              docs: project.docs,
+              message:
+                `entryFiles 未就绪（缺失: ${missing.join(", ") || "无"}；` +
+                `无合法条目: ${invalid.join(", ") || "无"}）。` +
+                `先 graphgen_deploy {target:${JSON.stringify(root)}, confirm:true} 生成种子条目，` +
+                `或手工补 docs/CHANGELOG.md 后重试。`,
+            };
+          }
+        }
         if (action === "doclint") {
           const r = await runEngine(cfg, root, path.join("tools", "doclint.py"), []);
           return { ok: r.code === 0, action, root, bootstrap, ...output(r) };

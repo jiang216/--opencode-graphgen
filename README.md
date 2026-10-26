@@ -79,7 +79,8 @@ python tools/doclint.py             # 文档防漂移
    （只提交本次改动文件、带条目 ID、禁止 push），不需要用户每次手动提交；`GRAPHGEN_AUTO_COMMIT=0` 可关闭。
 7. **自动部署**：全局 MCP 对新项目首次调用 `graphgen_query/repo/verify` 时先做冲突预检；
    空项目或普通业务文件无冲突时自动补齐上述全部能力，已有 AGENTS/工具/图谱等冲突则只提示
-   （默认不装插件、不建 VCS、不提交、不 push）。
+   （默认不装插件、不建 VCS、不提交、不 push）。首次缺 `docs/CHANGELOG.md` 时写入种子条目
+   `DG-001` 并补 `prefixes`/`allowOrphanEntries`，已有条目文件不覆盖。
 
 | 开关 | 作用 |
 |------|------|

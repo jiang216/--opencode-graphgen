@@ -9,6 +9,8 @@
   "idPattern": "^([A-Z]+)-(\\d+)$",
   "prefixes": {},
   "_comment_prefixes": "CHANGELOG 条目前缀名，如 {\"G\": \"Gizmo\", \"CAM\": \"Camera\"}；lint 会校验未知前缀",
+  "allowOrphanEntries": [],
+  "_comment_allowOrphanEntries": "允许暂无文档引用的条目 ID（如首次部署种子 DG-001）；只登记确认为种子的 ID，避免掩盖真实孤儿条目",
   "entryFiles": {
     "docs/CHANGELOG.md": {
       "heading": "^([A-Z]+-\\d+)\\s*[:：]?\\s*(.+)$",

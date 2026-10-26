@@ -215,10 +215,40 @@ ERROR: entry file not found: docs/CHANGELOG.md
 | 部署入口 | `repo detect` 隐式部署 | 独立 `graphgen_deploy`，带 `dryRun`/`confirm`/`force`/`snapshot` |
 | 冲突预检 | 无 | `conflicts` 数组，非空需 `force:true` |
 | 非 VCS | 静默空转 | `vcs:"none"` 时明确 `skip 代码仓库管理`，`status` 提示「repo status 返回 not_applicable」 |
-| `prefixes` | 未涉及 | 仍需人工配置，否则首条条目报「未知前缀」 |
+| `prefixes` | 未涉及 | 仍需人工配置，否则首条条目报「未知前缀」（20:0x 已修复，见 §3.9） |
 
 结论：P0-1（只读探测）、P0-2（`suggestedNextActions`）、P0-4（非 VCS 降级）的方向**已被采纳**；
 本次新增的 P0-3 证据（首次 `generate` 必败）是下一优先级。
+
+### 3.9 修复复测（P0 最小闭环）：首次部署自带种子条目
+
+已按 §3.7 的根因修复，不再要求用户先手写条目文件：
+
+| 改动 | 行为 |
+|---|---|
+| `install.py` 新增 `ensure_docs_scaffold` | 在写 `AGENTS.md` **之前**检查 `entryFiles`；缺 `docs/CHANGELOG.md` 时写入一条合法种子 `DG-001`（已有前缀则沿用），并补 `prefixes: {"DG":"变更"}` 与 `allowOrphanEntries:["DG-001"]` |
+| 已有条目文件 | 不覆盖、不追加；文件存在但没有合法条目时 `docs.ready=false`，跳过 `AGENTS.md`，避免规则先于数据落地 |
+| `mcp/status` | 增加 `docs.ready` / `missingEntryFiles` / `invalidEntryFiles`；最新建议可直接指向 `deploy` 或补条目 |
+| `mcp/query generate/check/doclint` | 先做 entry 预检；未就绪返回结构化 `needsDocs`，不再把 Python 的 `ERROR: entry file not found` 直接抛给用户 |
+| `tools/graphgen.py` | 支持 `allowOrphanEntries`，只豁免显式登记的种子条目，不吞真实业务条目的孤儿警告 |
+
+**复测（20:0x，全新临时项目）**：
+
+```text
+new   .../docs/CHANGELOG.md（种子条目 DG-001）
+upd   .../tools/graphgen.config.json（补默认前缀/种子条目豁免）
+[graphgen] done: 3 nodes, 1 edges, 0 errors, 0 warnings
+[graphgen] check: 3 nodes, 1 edges, 0 errors, 0 warnings
+doclint: OK
+```
+
+二次 `install.py` 输出 `skip .../docs/CHANGELOG.md（已存在合法条目）`，文件哈希不变；
+`node mcp/mcp-test.mjs` = **PASS=50 / FAIL=0**，覆盖空项目自动部署、种子落盘、已有 CHANGELOG 不覆盖、
+空条目文件返回 `needsDocs`、二次部署幂等。
+
+**边界与未做**：P0 只解决“从 0 到可生成”，没有实现完整 `adopt`——仍不会从 `README.md`
+自动切出 3–5 条业务种子，也不按项目语言自动检测前缀（默认 `DG`）。这两项保留到 `adopt` 阶段；
+当前项目若已有 `CHANGELOG.md` 但无合法条目，部署器只提示、不擅自改写用户文件。
 
 ---
 
@@ -308,6 +338,11 @@ ERROR: entry file not found: docs/CHANGELOG.md
 - **实现提示**：种子条目可以从 `README.md` 的二级标题自动切分（`DOC-001..00N`），
   让 `graph.json` 立刻非空，后续再人工细化。同时按项目语言自动写入 `prefixes`
   （C/驱动 → `DG`、前端 → `FE` 等），避免首条就撞「未知前缀」。
+- **实现状态（20:0x）**：P0 最小闭环已完成，但**不是**完整的 `adopt`。首次 `deploy` 现在会写
+  一条合法种子（`DG-001`）、补默认 `prefixes` 和 `allowOrphanEntries`，随后 `generate` 直接
+  0 errors / 0 warnings；已有 `CHANGELOG.md` 不覆盖，空条目文件返回 `needsDocs`。验收见 §3.9。
+  仍待做：扫描 README 自动生成 3–5 条业务条目、按语言检测前缀。为避免为了凑条数伪造 changelog，
+  这部分没有硬塞进 P0。
 
 ### P0-4 非 VCS 项目的降级模式
 

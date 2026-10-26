@@ -230,6 +230,14 @@ class GraphBuilder:
         self.files: dict[str, ParsedFile] = {}
         self.prefixes: dict[str, str] = cfg.get("prefixes", {})
         self.entry_files: dict[str, dict[str, Any]] = cfg.get("entryFiles", {})
+        raw_allow = cfg.get("allowOrphanEntries", [])
+        if isinstance(raw_allow, str):
+            raw_allow = [raw_allow]
+        elif not isinstance(raw_allow, list):
+            raw_allow = []
+        self.allow_orphan_entries: set[str] = {
+            str(x).strip().upper() for x in raw_allow if str(x).strip()
+        }
         self._edge_keys: set[tuple[str, str, str, str]] = set()
 
     # -- node registry ---------------------------------------------------
@@ -631,6 +639,11 @@ class GraphBuilder:
         for e in self.edges:
             incoming.add(e["to"])
         for nid in sorted(bug_nodes):
+            short = nid.split(":", 1)[1].upper() if ":" in nid else nid.upper()
+            # 首次部署的种子条目允许暂时没有文档引用；只豁免显式登记的 ID，
+            # 不把真实业务条目的孤儿警告一并吞掉。
+            if nid.upper() in self.allow_orphan_entries or short in self.allow_orphan_entries:
+                continue
             if nid not in incoming:
                 self.warnings.append(f"孤儿条目（无任何文档引用）: {nid}")
         self._lint_orphan_docs()

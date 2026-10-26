@@ -144,6 +144,69 @@ function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
 }
 
+function readJsonSafe(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * entryFiles 是否已落地：文件存在且至少有一个 `##` 标题匹配 heading。
+ * 首次部署的种子条目让 generate 从第一次就能通过；已有空文件不做静默追加。
+ */
+function inspectDocs(root) {
+  const out = {
+    ready: false,
+    entryFiles: [],
+    missingEntryFiles: [],
+    invalidEntryFiles: [],
+    graph: false,
+    markdown: false,
+  };
+  const cfg = readJsonSafe(path.join(root, "tools/graphgen.config.json"));
+  if (!cfg || typeof cfg !== "object") return out;
+  const entryFiles =
+    cfg.entryFiles && typeof cfg.entryFiles === "object" && !Array.isArray(cfg.entryFiles)
+      ? Object.keys(cfg.entryFiles)
+      : [];
+  out.entryFiles = entryFiles;
+  out.missingEntryFiles = entryFiles.filter(
+    (rel) => !fs.existsSync(path.join(root, rel)),
+  );
+  for (const rel of entryFiles) {
+    if (out.missingEntryFiles.includes(rel)) continue;
+    const entry = cfg.entryFiles[rel] || {};
+    const heading =
+      entry.heading || "^([A-Z]+-\\d+)\\s*[:：]?\\s*(.+)$";
+    let re;
+    try {
+      re = new RegExp(heading);
+    } catch {
+      out.invalidEntryFiles.push(rel);
+      continue;
+    }
+    let text = "";
+    try {
+      text = fs.readFileSync(path.join(root, rel), "utf8").replace(/^\uFEFF/, "");
+    } catch {
+      out.invalidEntryFiles.push(rel);
+      continue;
+    }
+    const ok = text
+      .split(/\r?\n/)
+      .map((line) => /^##\s+(.+)$/.exec(line.trim()))
+      .some((m) => m && re.test(m[1]));
+    if (!ok) out.invalidEntryFiles.push(rel);
+  }
+  out.ready =
+    out.missingEntryFiles.length === 0 && out.invalidEntryFiles.length === 0;
+  out.graph = fs.existsSync(path.join(root, "docs/graph.json"));
+  out.markdown = fs.existsSync(path.join(root, "docs/GRAPH.md"));
+  return out;
+}
+
 /**
  * 无 VCS 项目的文件系统快照：path + mtime + sha256，供文档漂移/部署核对。
  * 返回 null 表示未写入。
@@ -248,6 +311,7 @@ export function inspectProject(cfg, root) {
   const deployed =
     fs.existsSync(path.join(root, "tools/graphgen.config.json")) ||
     fs.existsSync(path.join(root, ".opencode/skills/graphgen/SKILL.md"));
+  const docs = inspectDocs(root);
   const info = {
     root,
     engineRoot: cfg.engineRoot,
@@ -261,7 +325,9 @@ export function inspectProject(cfg, root) {
       !engineReady ||
       missing.length > 0 ||
       stale.length > 0 ||
-      missingConfigs.length > 0,
+      missingConfigs.length > 0 ||
+      docs.missingEntryFiles.includes("docs/CHANGELOG.md"),
+    docs,
     snapshot,
     plugin,
     skill: fs.existsSync(
@@ -377,6 +443,7 @@ export async function deployProject(cfg, root, options = {}, { force = false } =
       target: root,
       options: opts,
       report,
+      docs: report.docs,
       fsSnapshot,
     };
   } finally {

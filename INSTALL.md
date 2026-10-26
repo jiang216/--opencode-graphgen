@@ -26,7 +26,8 @@ v0.3 起推荐 **MCP 全局安装**：装一次，任意项目自动部署；传
 
 - **Python 3.10+**（仅用标准库）
 - **Node.js 20+**（MCP 服务端 / 安装器）
-- 目标项目已有 `docs/` 目录，以及一份条目文件（默认 `docs/CHANGELOG.md`）
+- 目标项目无需预先有 `docs/` 或 `docs/CHANGELOG.md`：首次 `install.py` / MCP `deploy` 会创建种子条目；
+  已有条目文件不覆盖、不追加
 - opencode 增强（MCP/技能/插件）：MCP 推荐；插件为旧路径，需 opencode **V2 插件 API**（`Plugin.define`，≥ 2.0）
 - Windows 下建议先 `$env:PYTHONIOENCODING='utf-8'` 防中文乱码
 
@@ -76,6 +77,7 @@ python F:\shiyan\CLion\opencode-graphgen\install.py --target D:\code\myapp --hoo
 | `<目标>/tools/doclint.config.json` | 缺省时由示例生成（按项目裁剪规则开关） |
 | `<目标>/tools/repo.py`、`repo.config.template.json` | 代码仓库适配层与配置模板 |
 | `<目标>/tools/repo.config.json` | 缺省时由模板生成（护栏默认只警告） |
+| `<目标>/docs/CHANGELOG.md` | 首次缺失时写入 `DG-001`（已有前缀则沿用）种子条目，并补 `prefixes`/`allowOrphanEntries`；已有文件不覆盖 |
 | `<目标>` 的代码仓库 | 无 `.git/.hg/.svn` 且本机有 git → 自动 `git init -b main` + 播种 `.gitignore`（`--vcs none` 跳过；在父仓库内不建嵌套库；无 VCS 工具只提示） |
 | `<目标>/docs/repo.json`、`docs/REPO.md`、`docs/repo-links.json` | 部署快照（本地记录，已 gitignore）与条目↔提交索引（建库/检出成功后生成；doclint R8 在发布/CI 校验） |
 | `<目标>/.opencode/plugins/graphgen-watch.ts` | 旧插件；**仅 `--plugin` 时安装**（默认 MCP 模式不装） |
@@ -145,7 +147,7 @@ sh <仓库>/bootstrap/install-bootstrap.sh
 编辑 `<目标>/tools/graphgen.config.json`：
 
 1. `name`：项目名
-2. `prefixes`：CHANGELOG 条目前缀表（lint 校验未知前缀，**必须填**）
+2. `prefixes`：CHANGELOG 条目前缀表（首次部署会自动补 `DG`；按项目可改名/扩充）
 3. `output` 三个产物路径 + `scan.ignore` 务必包含三个产物（防自扫描循环）
 4. 其它按需（`tableEdges` 等，见 `graphgen-config.md`）
 

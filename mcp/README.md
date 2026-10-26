@@ -60,7 +60,9 @@ node mcp/install.mjs --link
 
 - 项目为空或只有普通业务文件：无冲突，先部署，再继续当前操作；
 - 已有 `AGENTS.md`、被改过的 `tools/graphgen.py`、已有 `docs/graph.json`/快照等：返回 `conflicts`，**不写盘**；确认后 `graphgen_deploy {target, confirm:true, force:true}`；
-- `status` 永远只读，返回 `conflicts` 和 `suggestedNextActions`。
+- 首次部署若 `docs/CHANGELOG.md` 不存在：自动写一条合法种子条目（默认 `DG-001`，已有前缀则沿用），并补 `prefixes` / `allowOrphanEntries`，让第一次 `generate` 就是 0 errors / 0 warnings；
+- 已有 `docs/CHANGELOG.md` 绝不覆盖/追加；文件存在但没有合法条目时，`docs.ready=false`，不写 `AGENTS.md`，`query generate/check/doclint` 返回 `needsDocs` 提示，而不是裸 Python 错误；
+- `status` 永远只读，返回 `conflicts`、`docs.ready` / `missingEntryFiles` 和 `suggestedNextActions`。
 
 ## 配置
 

@@ -17,17 +17,26 @@ const AUTO = path.join(TMP, "auto");
 const EMPTY = path.join(TMP, "empty");
 const CONFLICT = path.join(TMP, "conflict");
 const DOCS = path.join(TMP, "docs-conflict");
+const EXISTING = path.join(TMP, "existing-entry");
+const INVALID = path.join(TMP, "invalid-entry");
 const CONFIG = path.join(TMP, "config.json");
 fs.mkdirSync(PROJ, { recursive: true });
 fs.mkdirSync(AUTO, { recursive: true });
 fs.mkdirSync(EMPTY, { recursive: true });
 fs.mkdirSync(CONFLICT, { recursive: true });
 fs.mkdirSync(path.join(DOCS, "docs"), { recursive: true });
+fs.mkdirSync(path.join(EXISTING, "docs"), { recursive: true });
+fs.mkdirSync(path.join(INVALID, "docs"), { recursive: true });
 fs.writeFileSync(path.join(AUTO, "README.md"), "# auto project\n");
 fs.writeFileSync(
   path.join(CONFLICT, "AGENTS.md"),
   "# 项目自有约定\n\n不要覆盖这一行。\n",
 );
+fs.writeFileSync(
+  path.join(EXISTING, "docs/CHANGELOG.md"),
+  "# 已有变更日志\n\n## DG-001: 已有条目（2026-01-01）\n\n- 人工维护，不应被部署器覆盖。\n",
+);
+fs.writeFileSync(path.join(INVALID, "docs/CHANGELOG.md"), "# 变更日志\n\n暂无条目。\n");
 fs.writeFileSync(
   path.join(DOCS, "docs/graph.json"),
   JSON.stringify({ nodes: {}, edges: [] }, null, 2),
@@ -170,6 +179,25 @@ try {
   check("默认不装插件", !fs.existsSync(path.join(PROJ, ".opencode/plugins/graphgen-watch.ts")));
   check("AGENTS 片段", fs.existsSync(path.join(PROJ, "AGENTS.md")));
   check("部署快照", fs.existsSync(path.join(PROJ, "docs/repo.json")));
+  check(
+    "首次部署写入 CHANGELOG 种子",
+    fs.existsSync(path.join(PROJ, "docs/CHANGELOG.md")) &&
+      /## DG-001: .*（\d{4}-\d{2}-\d{2}）/.test(
+        fs.readFileSync(path.join(PROJ, "docs/CHANGELOG.md"), "utf8"),
+      ),
+  );
+  const seedCfg = JSON.parse(
+    fs.readFileSync(path.join(PROJ, "tools/graphgen.config.json"), "utf8"),
+  );
+  check(
+    "种子前缀与孤儿豁免已补",
+    seedCfg.prefixes?.DG &&
+      (seedCfg.allowOrphanEntries || []).includes("DG-001"),
+    JSON.stringify({
+      prefixes: seedCfg.prefixes,
+      allow: seedCfg.allowOrphanEntries,
+    }),
+  );
 
   const info = body(
     await call("tools/call", { name: "status", arguments: { root: PROJ } }),
@@ -181,6 +209,11 @@ try {
   });
   check("status 显示已安装", info.json?.project?.installed === true, infoDetail);
   check("status 无待部署", info.json?.project?.needsDeploy === false, infoDetail);
+  check(
+    "status docs.ready=true",
+    info.json?.project?.docs?.ready === true,
+    JSON.stringify(info.json?.project?.docs),
+  );
 
   // 缺技能/文件必须被识别为待部署（引擎源路径与目标路径不同）
   fs.rmSync(path.join(PROJ, ".opencode/skills/graphgen/SKILL.md"));
@@ -217,6 +250,10 @@ try {
   );
   check("自动部署后有引擎", fs.existsSync(path.join(AUTO, "tools/repo.py")));
   check(
+    "自动部署同时写 CHANGELOG 种子",
+    fs.existsSync(path.join(AUTO, "docs/CHANGELOG.md")),
+  );
+  check(
     "有文件但无冲突时自动部署",
     autoStatus.json?.result?.result === "not_applicable" &&
       autoStatus.json?.result?.mode === "fs",
@@ -243,6 +280,10 @@ try {
   check(
     "空项目自动部署不建 git",
     !fs.existsSync(path.join(EMPTY, ".git")),
+  );
+  check(
+    "空项目自动部署写 CHANGELOG 种子",
+    fs.existsSync(path.join(EMPTY, "docs/CHANGELOG.md")),
   );
 
   // 有冲突：只提示，不自动写盘；确认 force 后才追加/覆盖。
@@ -293,6 +334,7 @@ try {
     "deploy force 追加 AGENTS 并部署",
     forced.json?.ok === true &&
       fs.existsSync(path.join(CONFLICT, "tools/graphgen.py")) &&
+      fs.existsSync(path.join(CONFLICT, "docs/CHANGELOG.md")) &&
       fs
         .readFileSync(path.join(CONFLICT, "AGENTS.md"), "utf8")
         .includes("<!-- graphgen:installed -->"),
@@ -358,13 +400,110 @@ try {
       !fs.existsSync(path.join(DOCS, "tools/graphgen.py")),
   );
 
+  const gen = body(
+    await call("tools/call", {
+      name: "query",
+      arguments: { action: "generate", root: PROJ },
+    }),
+  );
+  check(
+    "种子后首次 generate 0 errors / 0 warnings",
+    gen.json?.code === 0 &&
+      /0 errors, 0 warnings/.test(gen.json?.output || "") &&
+      fs.existsSync(path.join(PROJ, "docs/graph.json")),
+    gen.text.slice(0, 180),
+  );
+  const doclint = body(
+    await call("tools/call", {
+      name: "query",
+      arguments: { action: "doclint", root: PROJ },
+    }),
+  );
+  check(
+    "种子后 doclint OK",
+    doclint.json?.code === 0 && /doclint: OK/.test(doclint.json?.output || ""),
+    doclint.text.slice(0, 180),
+  );
+
   const q = body(
     await call("tools/call", {
       name: "query",
       arguments: { action: "check", root: PROJ },
     }),
   );
-  check("query check 返回退出码", typeof q.json?.code === "number", `code=${q.json?.code}`);
+  check(
+    "query check 返回退出码",
+    typeof q.json?.code === "number",
+    `code=${q.json?.code}`,
+  );
+  check(
+    "种子后 check 0 errors / 0 warnings",
+    q.json?.code === 0 && /0 errors, 0 warnings/.test(q.json?.output || ""),
+    q.text.slice(0, 180),
+  );
+
+  // 二次部署不重复写种子，也不覆盖用户已有条目。
+  const seedText = fs.readFileSync(path.join(PROJ, "docs/CHANGELOG.md"), "utf8");
+  const again = body(
+    await call("tools/call", {
+      name: "deploy",
+      arguments: { target: PROJ, confirm: true },
+    }),
+  );
+  const nowSeedText = fs.readFileSync(path.join(PROJ, "docs/CHANGELOG.md"), "utf8");
+  check(
+    "二次部署幂等（种子不重复）",
+    again.json?.ok === true &&
+      nowSeedText === seedText &&
+      (seedText.match(/^## DG-001:/gm) || []).length === 1,
+    again.text.slice(0, 160) +
+      ` eq=${nowSeedText === seedText} len=${seedText.length}/${nowSeedText.length}`,
+  );
+
+  const existing = body(
+    await call("tools/call", {
+      name: "deploy",
+      arguments: { target: EXISTING, confirm: true },
+    }),
+  );
+  check(
+    "已有 CHANGELOG 不被覆盖",
+    existing.json?.ok === true &&
+      fs
+        .readFileSync(path.join(EXISTING, "docs/CHANGELOG.md"), "utf8")
+        .includes("人工维护，不应被部署器覆盖。") &&
+      existing.json?.docs?.seeded === false,
+    existing.text.slice(0, 180),
+  );
+
+  const invalid = body(
+    await call("tools/call", {
+      name: "deploy",
+      arguments: { target: INVALID, confirm: true },
+    }),
+  );
+  check(
+    "已有空 CHANGELOG 不静默追加且不写 AGENTS",
+    invalid.json?.ok === true &&
+      invalid.json?.docs?.ready === false &&
+      !fs.existsSync(path.join(INVALID, "AGENTS.md")),
+    invalid.text.slice(0, 180),
+  );
+  const invalidCheck = body(
+    await call("tools/call", {
+      name: "query",
+      arguments: { action: "check", root: INVALID },
+    }),
+  );
+  check(
+    "空条目库返回 needsDocs 而非裸 Python 错误",
+    invalidCheck.json?.ok === false &&
+      invalidCheck.json?.needsDocs === true &&
+      (invalidCheck.json?.docs?.invalidEntryFiles || []).includes(
+        "docs/CHANGELOG.md",
+      ),
+    invalidCheck.text.slice(0, 180),
+  );
 
   const repo = body(
     await call("tools/call", { name: "repo", arguments: { action: "status", root: PROJ } }),

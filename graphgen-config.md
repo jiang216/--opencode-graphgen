@@ -61,6 +61,7 @@ python <包目录>\graphgen.py --init <目标目录> [--name 项目名]
 | `scan.ignore` | 忽略（**务必含三个产物**，防自扫描循环） | 见模板 |
 | `idPattern` | 条目 id 校验正则 | `^([A-Z]+)-(\d+)$` |
 | `prefixes` | 条目前缀名表（lint 校验未知前缀） | `{}` |
+| `allowOrphanEntries` | 允许暂无文档引用的条目 ID（首次部署的种子条目） | `[]` |
 | `entryFiles` | 条目文件（`## 标题` → 节点）：`heading` 正则 + `type` | 见模板 |
 | `refSections` | ref 边节关键词（子串匹配）：命中 L2 标题，或**非标题行行首**出现（如条目内 `**相关历史条目**:` 加粗块，可切 section 至下一标题） | `["相关历史条目"]` |
 | `refEntryFiles` | ref 边指向的条目文件 | `["docs/CHANGELOG.md"]` |
@@ -69,6 +70,10 @@ python <包目录>\graphgen.py --init <目标目录> [--name 项目名]
 | `tableEdges` | 自定义表格→边 | `[]` |
 | `repo` | 代码仓库关联：`enabled`、`linksFile`（默认 `docs/repo-links.json`）、`snapshotMarkdown`（默认 `docs/REPO.md`，自动免扫描）、`maxCommitNodes` | 见模板 |
 | `output` | graph.json / GRAPH.md / graph.mmd 路径 | 见模板 |
+
+> `install.py` / MCP `deploy` 首次接入且 `docs/CHANGELOG.md` 不存在时，会写入一条
+> `DG-001`（已有前缀则沿用）种子条目，并自动补 `prefixes` 与 `allowOrphanEntries`，
+> 让第一次 `graphgen.py --check` / `doclint.py` 就能通过；已有条目文件绝不覆盖或追加。
 
 ### tableEdges 示例
 
