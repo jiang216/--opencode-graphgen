@@ -21,6 +21,9 @@ const ENGINE_SOURCE = fs.existsSync(path.join(SOURCE, "tools", "graphgen.py"))
   ? SOURCE
   : path.join(SOURCE, "engine");
 const VERSION = readVersion();
+// MCP 服务名 / 工具前缀：gcgl = 工程管理。旧名 graphgen 仅用于迁移时清理。
+const MCP_NAME = "gcgl";
+const LEGACY_MCP_NAMES = ["graphgen"];
 
 function readVersion() {
   for (const file of [
@@ -237,21 +240,30 @@ function buildEntry(mcpDir, configPath) {
 function register(configPath, entry, { dryRun, uninstall }) {
   const logs = [];
   if (uninstall && !fs.existsSync(configPath)) {
-    return [`skip  mcp.graphgen 不存在（${configPath}）`];
+    return [`skip  mcp.${MCP_NAME} 不存在（${configPath}）`];
   }
   let data = readJson(configPath, {});
   if (!data || typeof data !== "object") data = {};
   data.mcp = data.mcp && typeof data.mcp === "object" ? data.mcp : {};
   if (uninstall) {
-    if (data.mcp.graphgen) {
-      delete data.mcp.graphgen;
-      logs.push(`del   mcp.graphgen（${configPath}）`);
-    } else {
-      logs.push(`skip  mcp.graphgen 不存在（${configPath}）`);
+    let removed = false;
+    for (const name of [MCP_NAME, ...LEGACY_MCP_NAMES]) {
+      if (data.mcp[name]) {
+        delete data.mcp[name];
+        logs.push(`del   mcp.${name}（${configPath}）`);
+        removed = true;
+      }
     }
+    if (!removed) logs.push(`skip  mcp.${MCP_NAME} 不存在（${configPath}）`);
   } else {
-    data.mcp.graphgen = entry;
-    logs.push(`set   mcp.graphgen -> ${entry.command.join(" ")}`);
+    for (const name of LEGACY_MCP_NAMES) {
+      if (data.mcp[name]) {
+        delete data.mcp[name];
+        logs.push(`migr  del mcp.${name}`);
+      }
+    }
+    data.mcp[MCP_NAME] = entry;
+    logs.push(`set   mcp.${MCP_NAME} -> ${entry.command.join(" ")}`);
   }
   if (dryRun) {
     logs.push("dry-run：未写入配置文件");
@@ -310,7 +322,7 @@ function selfTest(serverPath, configPath, timeoutMs = 15000) {
           const names = (msg.result?.tools || []).map((t) => t.name);
           finish({
             ok: names.length > 0,
-            name: "graphgen",
+            name: MCP_NAME,
             tools: names,
             stderr: stderr.trim(),
           });
@@ -365,10 +377,13 @@ async function doctor(args, paths) {
   }
   try {
     const data = readJson(paths.opencodeConfig, {});
+    const legacy = LEGACY_MCP_NAMES.filter((name) => data?.mcp?.[name]);
     add(
       "opencode 注册",
-      !!data?.mcp?.graphgen,
-      paths.opencodeConfig,
+      !!data?.mcp?.[MCP_NAME],
+      legacy.length
+        ? `${paths.opencodeConfig}（存在旧 ${legacy.map((name) => `mcp.${name}`).join(", ")}，运行安装迁移）`
+        : paths.opencodeConfig,
     );
   } catch (e) {
     add("opencode 配置解析", false, e.message);
@@ -487,7 +502,7 @@ async function main() {
   if (args.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
   } else {
-    process.stdout.write(`graphgen MCP v${VERSION}\n`);
+    process.stdout.write(`graphgen MCP v${VERSION}（服务名 ${MCP_NAME}）\n`);
     for (const line of report.logs) process.stdout.write(`  ${line}\n`);
     for (const c of report.checks) {
       process.stdout.write(
@@ -498,7 +513,7 @@ async function main() {
     process.stdout.write(report.ok ? "install: OK\n" : "install: FAIL\n");
     if (report.ok && !args.doctor) {
       process.stdout.write(
-        "  提示: 执行 `opencode reload`（或重启 opencode）后运行 `opencode mcp list` 确认 graphgen connected\n",
+        `  提示: 执行 \`opencode reload\`（或重启 opencode）后运行 \`opencode mcp list\` 确认 ${MCP_NAME} connected\n`,
       );
     }
   }

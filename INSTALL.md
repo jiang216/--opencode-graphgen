@@ -36,7 +36,7 @@ v0.3 起推荐 **MCP 全局安装**：装一次，任意项目自动部署；传
 ### 方式 A：MCP 全局安装（推荐）
 
 ```powershell
-# 1) 装运行时 + 注册全局 mcp.graphgen（目录可自定义）
+# 1) 装运行时 + 注册全局 mcp.gcgl（目录可自定义）
 node <本仓库>\mcp\install.mjs --install-dir D:\tools\graphgen-mcp
 
 # 2) 体检
@@ -48,13 +48,13 @@ node <本仓库>\mcp\install.mjs --link
 
 - 默认目录：`%USERPROFILE%\.config\opencode\graphgen-mcp`；`--install-dir` 由用户指定。
 - 安装器会复制 `mcp/ + engine/{install.py,tools,templates,skills,src}`、生成 `config.json`、
-  写入全局 `~/.config/opencode/opencode.json` 的 `mcp.graphgen`（先备份、原子写），并做 MCP 自检。
+  写入全局 `~/.config/opencode/opencode.json` 的 `mcp.gcgl`（先备份、原子写），并做 MCP 自检。
 - **重启 opencode** 后生效。项目级注册：`--scope project --target <项目>`。
-- 之后在任意项目里：`graphgen_status` → `graphgen_deploy {target, confirm:true}`；
-  首次调用 `graphgen_query/repo/verify` 会先做冲突预检，无冲突自动补引擎（`autoDeploy: true`），
+- 之后在任意项目里：`gcgl_status` → `gcgl_deploy {target, confirm:true}`；
+  首次调用 `gcgl_query/repo/verify` 会先做冲突预检，无冲突自动补引擎（`autoDeploy: true`），
   有冲突只返回 `conflicts`，确认后加 `force:true`。
 - 首次建库：`status` 发现无 git 身份时，agent 先问 `user.name/user.email`；用户确认“以后都用”后
-  调 `graphgen_deploy {target, confirm:true, identity:{name,email}, rememberIdentity:true}`，
+  调 `gcgl_deploy {target, confirm:true, identity:{name,email}, rememberIdentity:true}`，
   配置里只保存 name/email（不保存密码/PAT），后续项目默认建库+首次提交。
 - 详见 [mcp/README.md](mcp/README.md)。
 
@@ -175,13 +175,13 @@ opencode 内验证（**重启 opencode**）：
 
 MCP（推荐）：
 
-- `graphgen_status`：只读体检；新项目先看这个。
-- `graphgen_deploy {target, confirm:true}`：部署/同步；不传 confirm 只出计划。
-- `graphgen_query`：`action=query node=DG-009` / `generate` / `check` / `doclint`。
-- `graphgen_repo`：`status` / `init` / `snapshot` / `links` / `guard`。
-- `graphgen_verify`：一次跑 graphgen + doclint + repo status。
+- `gcgl_status`：只读体检；新项目先看这个。
+- `gcgl_deploy {target, confirm:true}`：部署/同步；不传 confirm 只出计划。
+- `gcgl_query`：`action=query node=DG-009` / `generate` / `check` / `doclint`。
+- `gcgl_repo`：`status` / `init` / `snapshot` / `links` / `guard`。
+- `gcgl_verify`：一次跑 graphgen + doclint + repo status。
 - 常驻记忆：每轮注入「改完自己提交」（`GRAPHGEN_AUTO_COMMIT=0` 可关）；只提交本次改动文件，禁止 push。
-- 无文件监听：文档改完显式 `graphgen_query action=generate`。
+- 无文件监听：文档改完显式 `gcgl_query action=generate`。
 
 旧插件（`--plugin`，可选）：
 
@@ -207,13 +207,13 @@ node mcp\install.mjs --install-dir D:\tools\graphgen-mcp --uninstall --purge  # 
 ## 7. 常见问题
 
 - **MCP 工具看不到**：确认已重启 opencode；跑 `node mcp\install.mjs --doctor` 看注册/自检；
-  `opencode.json` 里应有 `mcp.graphgen`（`type=local`，`GRAPHGEN_CONFIG` 指向 `config.json`）。
+  `opencode.json` 里应有 `mcp.gcgl`（`type=local`，`GRAPHGEN_CONFIG` 指向 `config.json`）。
 - **新项目没有自动部署**：检查 `mcp/config.json` 的 `autoDeploy` 是否为 `true`；
-  源仓库（`sourceRoot`）会被自动跳过。若 `graphgen_status` 返回 `conflicts`，说明部署会改动已有文件
+  源仓库（`sourceRoot`）会被自动跳过。若 `gcgl_status` 返回 `conflicts`，说明部署会改动已有文件
   （AGENTS、被改过的工具、已有图谱/快照等），确认后执行
-  `graphgen_deploy {target, confirm:true, force:true}`；也可先 `graphgen_status` 看 `suggestedNextActions`。
+  `gcgl_deploy {target, confirm:true, force:true}`；也可先 `gcgl_status` 看 `suggestedNextActions`。
 - **默认没有文件监听**：v0.3 默认只装 MCP；需要保存即重生成时用 `install.py --plugin`，或改完文档跑
-  `graphgen_query action=generate`。
+  `gcgl_query action=generate`。
 - **中文乱码**：先 `$env:PYTHONIOENCODING='utf-8'`。
 - **`--check` 报「未知前缀」**：在 `prefixes` 补前缀，或修正 CHANGELOG 标题。
 - **产物文件名冲突**：产物固定 `docs/GRAPH.md`（大写）。功能文档**勿用 `graph.md`**（Windows 大小写不敏感时与产物同文件）。

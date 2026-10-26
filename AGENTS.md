@@ -1,7 +1,7 @@
 # opencode-graphgen 仓库规范
 
 文档图谱（graphgen）+ 文档防漂移（doclint）+ 仓库管理（repo）全家桶的**唯一事实源**仓库。
-v0.3 起以 `mcp/` 服务端为主；改动本仓库工具后，用 MCP `graphgen_deploy` 或 `install.py` 同步消费项目。
+v0.3 起以 `mcp/` 服务端为主；改动本仓库工具后，用 MCP `gcgl_deploy` 或 `install.py` 同步消费项目。
 
 ## 目录
 
@@ -16,7 +16,7 @@ v0.3 起以 `mcp/` 服务端为主；改动本仓库工具后，用 MCP `graphge
 ## 强制约定
 
 1. **中文汇报**：完成后用中文汇报做了什么、验证结果、遗留问题。
-2. **唯一事实源**：本仓库外不手改拷贝（消费项目的 `tools/*.py`、插件、技能都是安装产物）；同步用 MCP `graphgen_deploy` 或 `python install.py --target <项目> [--hooks] [--plugin]`。
+2. **唯一事实源**：本仓库外不手改拷贝（消费项目的 `tools/*.py`、插件、技能都是安装产物）；同步用 MCP `gcgl_deploy` 或 `python install.py --target <项目> [--hooks] [--plugin]`。
 3. **改工具必验证**：
    - `node mcp/mcp-test.mjs` 0 失败
    - `node mcp/install.mjs --doctor`（已装运行时）或临时目录装一份后 `graphgen --check` 0 错 0 警 + `doclint` OK

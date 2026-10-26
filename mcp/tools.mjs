@@ -178,7 +178,7 @@ async function prepare(cfg, rootArg) {
     if (bootstrap.reason === "source-root") {
       throw new Error(
         `${root} 是 graphgen MCP 源仓库，自动部署已跳过。` +
-          `如确实要把它当消费项目安装，显式调用 graphgen_deploy {target:"${root}", confirm:true}`,
+          `如确实要把它当消费项目安装，显式调用 gcgl_deploy {target:"${root}", confirm:true}`,
       );
     }
     if (bootstrap.reason === "conflict") {
@@ -187,13 +187,13 @@ async function prepare(cfg, rootArg) {
         .join("\n");
       throw new Error(
         `项目 ${root} 未部署 graphgen，但部署会改动已有文件：\n${list}\n` +
-          `确认覆盖/追加后执行 graphgen_deploy {target:"${root}", confirm:true, force:true}；` +
+          `确认覆盖/追加后执行 gcgl_deploy {target:"${root}", confirm:true, force:true}；` +
           `或先备份/合并冲突文件。`,
       );
     }
     throw new Error(
       `项目 ${root} 缺少/过期 graphgen 引擎（原因: ${bootstrap.reason}）。` +
-        `请调用 graphgen_deploy {target:"${root}", confirm:true}，或在 mcp/config.json 打开 autoDeploy`,
+        `请调用 gcgl_deploy {target:"${root}", confirm:true}，或在 mcp/config.json 打开 autoDeploy`,
     );
   }
   return { root, bootstrap };
@@ -246,18 +246,18 @@ export function buildTools(cfg, version) {
         } else if (info.needsDeploy) {
           if (info.conflicts.length) {
             suggestedNextActions.push(
-              `graphgen_deploy {target:${JSON.stringify(root)}, confirm:true, force:true}  ` +
+              `gcgl_deploy {target:${JSON.stringify(root)}, confirm:true, force:true}  ` +
                 `# 先确认 ${info.conflicts.length} 处冲突`,
             );
           } else {
             suggestedNextActions.push(
-              `graphgen_deploy {target:${JSON.stringify(root)}, confirm:true}`,
+              `gcgl_deploy {target:${JSON.stringify(root)}, confirm:true}`,
             );
           }
         }
         if (info.needsDeploy && !info.deployed) {
           suggestedNextActions.push(
-            `graphgen_query {action:"generate", root:${JSON.stringify(root)}}  # 部署后生成图谱`,
+            `gcgl_query {action:"generate", root:${JSON.stringify(root)}}  # 部署后生成图谱`,
           );
         }
         if (!info.docs?.ready) {
@@ -279,14 +279,14 @@ export function buildTools(cfg, version) {
         }
         if (info.docs?.ready && !info.docs?.graph && !info.needsDeploy) {
           suggestedNextActions.push(
-            `graphgen_query {action:"generate", root:${JSON.stringify(root)}}  # 生成图谱`,
+            `gcgl_query {action:"generate", root:${JSON.stringify(root)}}  # 生成图谱`,
           );
         }
         if ((!vcs || (typeof vcs === "object" && !vcs.vcs)) && !hasVcsMarker) {
           if (cfg.deploy.vcsInit && !info.identity?.configured) {
             suggestedNextActions.push(
               "无 VCS 且未配置 git 身份：先询问用户 user.name/user.email，再 " +
-                `graphgen_deploy {target:${JSON.stringify(root)}, confirm:true, identity:{name,email}, rememberIdentity:true}`,
+                `gcgl_deploy {target:${JSON.stringify(root)}, confirm:true, identity:{name,email}, rememberIdentity:true}`,
             );
           } else if (cfg.deploy.vcsInit && !info.identity?.remember) {
             suggestedNextActions.push(
@@ -298,13 +298,13 @@ export function buildTools(cfg, version) {
             );
           } else {
             suggestedNextActions.push(
-              "无 VCS：repo status 返回 not_applicable；需要文件快照时用 graphgen_deploy（snapshot=true）",
+              "无 VCS：repo status 返回 not_applicable；需要文件快照时用 gcgl_deploy（snapshot=true）",
             );
           }
         }
         return {
           server: {
-            name: "graphgen",
+            name: "gcgl",
             version,
             engineRoot: cfg.engineRoot,
             configPath: cfg.configPath,
@@ -405,7 +405,7 @@ export function buildTools(cfg, version) {
               conflicts: e.conflicts || info.conflicts,
               info,
               message:
-                "部署会改动已有文件，未写盘。确认后调用 graphgen_deploy {target, confirm:true, force:true}，或先备份/合并冲突文件。",
+                "部署会改动已有文件，未写盘。确认后调用 gcgl_deploy {target, confirm:true, force:true}，或先备份/合并冲突文件。",
             };
           }
           throw e;
@@ -430,7 +430,7 @@ export function buildTools(cfg, version) {
               message:
                 `entryFiles 未就绪（缺失: ${missing.join(", ") || "无"}；` +
                 `无合法条目: ${invalid.join(", ") || "无"}）。` +
-                `先 graphgen_deploy {target:${JSON.stringify(root)}, confirm:true} 生成种子条目，` +
+                `先 gcgl_deploy {target:${JSON.stringify(root)}, confirm:true} 生成种子条目，` +
                 `或手工补 docs/CHANGELOG.md 后重试。`,
             };
           }
@@ -657,16 +657,16 @@ export function readResource(cfg, uri) {
         "# graphgen MCP 使用契约",
         "",
         "## 工具",
-        "- `graphgen_status`：只读体检；新项目先看这个。",
-        "- `graphgen_deploy`：部署/同步；默认只出计划，`confirm=true` 才写。",
-        "- `graphgen_query`：query/generate/check/doclint。",
-        "- `graphgen_repo`：detect/status/init/snapshot/links/guard。",
-        "- `graphgen_verify`：graphgen --check + doclint + repo status。",
+        "- `gcgl_status`：只读体检；新项目先看这个。",
+        "- `gcgl_deploy`：部署/同步；默认只出计划，`confirm=true` 才写。",
+        "- `gcgl_query`：query/generate/check/doclint。",
+        "- `gcgl_repo`：detect/status/init/snapshot/links/guard。",
+        "- `gcgl_verify`：graphgen --check + doclint + repo status。",
         "",
         "## 硬性规则",
-        "- 新项目缺引擎：直接 `graphgen_deploy {target, confirm:true}`，不要回源仓库手拷。",
+        "- 新项目缺引擎：直接 `gcgl_deploy {target, confirm:true}`，不要回源仓库手拷。",
         "- 无 git 身份时先问用户 name/email；确认以后都用后传 `identity` + `rememberIdentity:true`，只存 name/email，不存密码。",
-        "- 改完文档：`graphgen_query action=generate`，提交前 `graphgen_verify`。",
+        "- 改完文档：`gcgl_query action=generate`，提交前 `gcgl_verify`。",
         "- 改完一批文件由 agent 自己 commit；只 add 本次改动，不 push、不 amend、不改全局 git config。",
         "- 部署/init 写盘前先出计划；目标不能是引擎目录。",
         "",

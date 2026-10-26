@@ -150,9 +150,9 @@ try {
     capabilities: {},
     clientInfo: { name: "graphgen-mcp-test", version: "1" },
   });
-  check("initialize name=graphgen", init.result?.serverInfo?.name === "graphgen");
+  check("initialize name=gcgl", init.result?.serverInfo?.name === "gcgl");
   const ins = init.result?.instructions ?? "";
-  check("instructions 注入部署/提交约定", /graphgen_deploy/.test(ins) && /自动提交/.test(ins), `${ins.length} 字符`);
+  check("instructions 注入部署/提交约定", /gcgl_deploy/.test(ins) && /自动提交/.test(ins), `${ins.length} 字符`);
 
   const list = await call("tools/list", {});
   const names = (list.result?.tools ?? []).map((t) => t.name).sort();
@@ -166,7 +166,7 @@ try {
   const st = body(
     await call("tools/call", { name: "status", arguments: { root: SOURCE } }),
   );
-  check("status(仓库自身)", st.json?.server?.name === "graphgen", `installed=${st.json?.project?.installed}`);
+  check("status(仓库自身)", st.json?.server?.name === "gcgl", `installed=${st.json?.project?.installed}`);
 
   const plan = body(
     await call("tools/call", {

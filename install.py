@@ -50,6 +50,15 @@ HERE = Path(__file__).resolve().parent
 PLUGIN_DEP = {"@opencode/plugin": "2.0.32"}
 PLUGIN_STALE_DEPS = ("@opencode-ai/plugin",)
 MARKER = "<!-- graphgen:installed -->"
+AGENTS_HEADING = "## 文档图谱 graphgen + 防漂移 doclint（已安装）"
+# MCP 工具前缀改名：仅迁移 AGENTS 中由安装器写入的片段，不碰用户其他内容。
+MCP_TOOL_RENAMES = {
+    "graphgen_status": "gcgl_status",
+    "graphgen_deploy": "gcgl_deploy",
+    "graphgen_query": "gcgl_query",
+    "graphgen_repo": "gcgl_repo",
+    "graphgen_verify": "gcgl_verify",
+}
 SNAPSHOT_JSON = "docs/repo.json"
 SNAPSHOT_MD = "docs/REPO.md"
 LINKS_JSON = "docs/repo-links.json"
@@ -564,12 +573,34 @@ def remove_plugin(target: Path) -> list[str]:
     return out
 
 
+def migrate_agents_mcp_names(text: str) -> tuple[str, bool]:
+    """只迁移安装器写入的 AGENTS 片段里的旧 MCP 工具名。"""
+    start = text.find(AGENTS_HEADING)
+    if start < 0:
+        return text, False
+    end = text.find(MARKER, start)
+    if end < 0:
+        return text, False
+    block = text[start:end]
+    migrated = block
+    for old, new in MCP_TOOL_RENAMES.items():
+        migrated = re.sub(rf"\b{old}\b", new, migrated)
+    migrated = migrated.replace("`graphgen` MCP", "`gcgl` MCP")
+    if migrated == block:
+        return text, False
+    return text[:start] + migrated + text[end:], True
+
+
 def append_agents_snippet(target: Path) -> str:
     agents = target / "AGENTS.md"
     snippet = (HERE / "templates" / "agents-snippet.md").read_text(encoding="utf-8")
     if agents.is_file():
         text = agents.read_text(encoding="utf-8")
         if MARKER in text:
+            migrated, changed = migrate_agents_mcp_names(text)
+            if changed:
+                agents.write_text(migrated, encoding="utf-8")
+                return f"upd   {agents}（迁移 MCP 工具名 graphgen_* -> gcgl_*）"
             return f"skip  {agents}（已有安装标记）"
         sep = "" if text.endswith("\n") else "\n"
         agents.write_text(text + sep + "\n" + snippet, encoding="utf-8")

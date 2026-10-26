@@ -18,19 +18,19 @@ description: Run the graphgen knowledge-graph generator/linter, the doclint anti
 
 ## MCP 优先（v0.3）
 
-如果当前 opencode 已注册 `graphgen` MCP 服务端，优先用工具而不是手敲命令：
+如果当前 opencode 已注册 `gcgl` MCP 服务端，优先用工具而不是手敲命令：
 
 | 工具 | 用途 |
 |------|------|
-| `graphgen_status` | 只读体检：引擎/配置/VCS/快照/冲突，`needsDeploy` / `suggestedNextActions` |
-| `graphgen_deploy` | 部署/同步；默认只出计划，`confirm=true` 才写；冲突需 `force=true` |
-| `graphgen_query` | `query`（节点/反链）/ `generate` / `check` / `doclint` |
-| `graphgen_repo` | `status` / `init` / `snapshot` / `links` / `guard`；无 VCS 返回 `not_applicable` |
-| `graphgen_verify` | graphgen + doclint + repo status 一次跑完 |
+| `gcgl_status` | 只读体检：引擎/配置/VCS/快照/冲突，`needsDeploy` / `suggestedNextActions` |
+| `gcgl_deploy` | 部署/同步；默认只出计划，`confirm=true` 才写；冲突需 `force=true` |
+| `gcgl_query` | `query`（节点/反链）/ `generate` / `check` / `doclint` |
+| `gcgl_repo` | `status` / `init` / `snapshot` / `links` / `guard`；无 VCS 返回 `not_applicable` |
+| `gcgl_verify` | graphgen + doclint + repo status 一次跑完 |
 
-- 新项目缺引擎：先 `graphgen_status`；无冲突时 `query/repo/verify` 自动部署，有冲突只提示，确认后 `graphgen_deploy {target, confirm:true, force:true}`。
-- 首次无仓库：`status` 返回 `identity` / `needsIdentity`。先问用户 `user.name/user.email`，确认“以后都用”后 `graphgen_deploy {target, confirm:true, identity:{name,email}, rememberIdentity:true}`；已记住时后续项目自动建库+首次提交。
-- MCP 不做文件监听：改完文档显式 `graphgen_query action=generate`；想保存即重生成再装 `--plugin`。
+- 新项目缺引擎：先 `gcgl_status`；无冲突时 `query/repo/verify` 自动部署，有冲突只提示，确认后 `gcgl_deploy {target, confirm:true, force:true}`。
+- 首次无仓库：`status` 返回 `identity` / `needsIdentity`。先问用户 `user.name/user.email`，确认“以后都用”后 `gcgl_deploy {target, confirm:true, identity:{name,email}, rememberIdentity:true}`；已记住时后续项目自动建库+首次提交。
+- MCP 不做文件监听：改完文档显式 `gcgl_query action=generate`；想保存即重生成再装 `--plugin`。
 - 提交记忆由 MCP `initialize.instructions` 注入（`GRAPHGEN_AUTO_COMMIT=0` 可关）。
 - 没有 MCP 时，下面命令仍全部可用。
 
@@ -80,7 +80,7 @@ python tools/repo.py guard --stage commit   # 提交护栏（只读；hooks 会�
 
 - 部署时 `install.py` 自动检测/建库；本机无 git/hg/svn 会打印安装指引并跳过（不影响图谱）。
 - 提交信息带条目 ID（`DG-009`、`Refs: AG-733`），`links` 后 graphgen 会生成
-  `COMMIT:<短哈希>` 节点与 `touches` 边：`graphgen_query node=DG-009` 即列出相关提交。
+  `COMMIT:<短哈希>` 节点与 `touches` 边：`gcgl_query node=DG-009` 即列出相关提交。
 - `docs/REPO.md` 是 AUTO-GENERATED 产物，已自动加入 `scan.ignore` 与 `.gitignore`（本地部署记录）；
   发布后必须重跑 `snapshot`。doclint R8 在发布/CI 校验它与当前 HEAD 一致；提交钩子用
   `DOCLINT_SKIP_R8=1` 跳过（提交本身会让快照变旧）。
@@ -135,7 +135,7 @@ print(g["outlinks"]["BUG:G-004"])           # 出链（如有）
 ## 注意事项
 
 - 改动 `docs/`、`AGENTS.md`、`.opencode/skills/*/SKILL.md`、`.claude/skills/`、`tools/graphgen.config.json` 后，
-  请手动跑 `python tools/graphgen.py`（或 MCP `graphgen_query action=generate`）并确认 `--check` 通过；
+  请手动跑 `python tools/graphgen.py`（或 MCP `gcgl_query action=generate`）并确认 `--check` 通过；
   只有装了旧插件（`--plugin`）才会保存即重生成。
 - 改完文档随手跑 `python tools/doclint.py`；条目文件改动尤其看 R7 提示。
 - 新增条目/文档引用后，跑 `--check` 确认无「孤儿条目」警告。

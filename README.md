@@ -26,15 +26,15 @@ node mcp\install.mjs --install-dir D:\tools\graphgen-mcp
 node mcp\install.mjs --install-dir D:\tools\graphgen-mcp --doctor
 
 # 2) 重启 opencode；之后任意项目里：
-#    graphgen_status                       # 看项目缺什么
-#    graphgen_deploy {target, confirm:true}
-#    graphgen_query action=generate
-#    graphgen_verify
+#    gcgl_status                       # 看项目缺什么
+#    gcgl_deploy {target, confirm:true}
+#    gcgl_query action=generate
+#    gcgl_verify
 ```
 
-新项目第一次调用 `graphgen_query` / `graphgen_repo` / `graphgen_verify` 时会先做**冲突预检**：
-无冲突自动补齐引擎（`autoDeploy: true`），有冲突只返回 `conflicts`，确认后 `graphgen_deploy {target, confirm:true, force:true}`。
-也可先 `graphgen_status` 看 `suggestedNextActions`。详见 [mcp/README.md](mcp/README.md)。
+新项目第一次调用 `gcgl_query` / `gcgl_repo` / `gcgl_verify` 时会先做**冲突预检**：
+无冲突自动补齐引擎（`autoDeploy: true`），有冲突只返回 `conflicts`，确认后 `gcgl_deploy {target, confirm:true, force:true}`。
+也可先 `gcgl_status` 看 `suggestedNextActions`。详见 [mcp/README.md](mcp/README.md)。
 
 ## 传统安装（无 MCP / 需要文件监听）
 
@@ -59,8 +59,8 @@ python tools/doclint.py             # 文档防漂移
 - `python tools/doclint.py` 文档防漂移（配置 `tools/doclint.config.json`）。
 - `python tools/gen_doc_slice.py --write` 回写生成块。
 - `python tools/repo.py status|snapshot|links|guard` 代码仓库体检/部署快照/条目↔提交/护栏。
-- opencode 内（MCP）：`graphgen_query`（query/generate/check/doclint）、`graphgen_repo`（status/init/snapshot/links/guard）、
-  `graphgen_verify`、`graphgen_deploy`、`graphgen_status`。
+- opencode 内（MCP）：`gcgl_query`（query/generate/check/doclint）、`gcgl_repo`（status/init/snapshot/links/guard）、
+  `gcgl_verify`、`gcgl_deploy`、`gcgl_status`。
 - 旧插件路径：`graphgen_query` / `repo_query`（`--plugin` 安装时）；`docs/**` 改动自动重生成。
 - `git commit` 自动跑 doclint + graphgen `--check` + `repo.py guard`（`--hooks` 安装时）。
 
@@ -73,11 +73,11 @@ python tools/doclint.py             # 文档防漂移
    svn 需 `--vcs-remote <URL>`；本机没有任何 VCS 工具 → 打印安装指引，安装继续。
 3. **部署快照**：`repo.py snapshot` → `docs/repo.json` + `docs/REPO.md`（AUTO-GENERATED，本地部署记录，已 gitignore），doclint **R8** 在发布/CI 检查其新鲜度（提交钩子用 `DOCLINT_SKIP_R8=1` 跳过，避免「提交后快照必然过期」死循环）。
 4. **条目 ↔ 提交**：提交信息带 `DG-009` 这类条目 ID，`repo.py links` → `docs/repo-links.json`；
-   graphgen 生成 `COMMIT:<短哈希>` 节点与 `touches` 边（`graphgen_query node=DG-009` 可查）。
+   graphgen 生成 `COMMIT:<短哈希>` 节点与 `touches` 边（`gcgl_query node=DG-009` 可查）。
 5. **护栏**：pre-commit / commit-msg 调 `repo.py guard`（只读，默认只警告，不执行 add/commit/push）。
 6. **自动提交记忆**：MCP `initialize.instructions` 每轮注入约定——改完由 agent 自己 `git commit`
    （只提交本次改动文件、带条目 ID、禁止 push），不需要用户每次手动提交；`GRAPHGEN_AUTO_COMMIT=0` 可关闭。
-7. **自动部署**：全局 MCP 对新项目首次调用 `graphgen_query/repo/verify` 时先做冲突预检；
+7. **自动部署**：全局 MCP 对新项目首次调用 `gcgl_query/repo/verify` 时先做冲突预检；
    空项目或普通业务文件无冲突时自动补齐上述全部能力，已有 AGENTS/工具/图谱等冲突则只提示。
    首次部署会检查 git 身份：没有身份时先问用户 `user.name/user.email`，确认“以后都用”后写入
    MCP 配置，后续项目默认自动建库+首次提交；未确认前不会偷偷 `git init`。
@@ -96,9 +96,9 @@ python tools/doclint.py             # 文档防漂移
 ## 维护约定（本仓库）
 
 - **唯一事实源**：MCP/插件/技能/引擎/doclint/模板只在这里改；消费项目（openfbx、code_grbk 等）一律用
-  `graphgen_deploy` 或 `install.py` 更新，禁止在消费方手改拷贝。
+  `gcgl_deploy` 或 `install.py` 更新，禁止在消费方手改拷贝。
 - 改完本仓库工具后：`node mcp/mcp-test.mjs` + `node mcp/install.mjs --doctor`；需要同步已装运行时时重跑安装器；
-  消费项目可用 MCP `graphgen_deploy` 同步，或照旧跑 `install.py`，并跑 `graphgen --check` / `doclint` 验证。
+  消费项目可用 MCP `gcgl_deploy` 同步，或照旧跑 `install.py`，并跑 `graphgen --check` / `doclint` 验证。
 - 引擎同步历史：`tools/graphgen.py` 自 openfbx 仓库迁入；openfbx 现为其消费方。
 - 汇报/文档用**中文**。
 

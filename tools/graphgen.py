@@ -586,7 +586,7 @@ class GraphBuilder:
     def _repo_edges(self) -> None:
         """条目 ↔ 提交：把 tools/repo.py links 的索引接进图谱。
 
-        边方向：条目 → 提交（kind=touches），于是 `graphgen_query node=DG-009`
+        边方向：条目 → 提交（kind=touches），于是 `gcgl_query node=DG-009`
         能直接列出「这条需求改过哪些提交」，提交侧则拿到反链。
         索引里引用已删除/改名的条目时**静默跳过**：历史索引不应把
         `--check` 变成红灯（否则删条目必然破 CI）。

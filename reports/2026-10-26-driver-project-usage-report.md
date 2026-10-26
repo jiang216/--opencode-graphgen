@@ -49,7 +49,7 @@
 
 ## 3. 现场证据
 
-### 3.1 驱动工程侧：`graphgen_status`
+### 3.1 驱动工程侧：`gcgl_status`
 
 ```json
 {
@@ -175,7 +175,7 @@ links  扫描 5 提交，未发现条目 ID（提交信息里写 DG-009 之类�
 
 ### 3.7 补充观测（19:5x 复测）：部署成功 ≠ 可生成，首次 `generate` 必败
 
-按新版指令执行 `graphgen_deploy {confirm:true, vcs:"none"}`，日志尾部明确 `new AGENTS.md`、9 个工具/配置文件、`.opencode/skills/graphgen/`，返回 `ok: true`。紧接着 `query action=generate`：
+按新版指令执行 `gcgl_deploy {confirm:true, vcs:"none"}`，日志尾部明确 `new AGENTS.md`、9 个工具/配置文件、`.opencode/skills/graphgen/`，返回 `ok: true`。紧接着 `query action=generate`：
 
 ```
 [graphgen] wrote J:/ShiYan/CLion/temp/docs/graph.json
@@ -212,7 +212,7 @@ ERROR: entry file not found: docs/CHANGELOG.md
 | 观察点 | 报告成文时 | 复测时 |
 |---|---|---|
 | `status` 返回 | 只有 `needsDeploy` | 增加 `suggestedNextActions`（3 条可直接执行的命令） |
-| 部署入口 | `repo detect` 隐式部署 | 独立 `graphgen_deploy`，带 `dryRun`/`confirm`/`force`/`snapshot` |
+| 部署入口 | `repo detect` 隐式部署 | 独立 `gcgl_deploy`，带 `dryRun`/`confirm`/`force`/`snapshot` |
 | 冲突预检 | 无 | `conflicts` 数组，非空需 `force:true` |
 | 非 VCS | 静默空转 | `vcs:"none"` 时明确 `skip 代码仓库管理`，`status` 提示「repo status 返回 not_applicable」 |
 | `prefixes` | 未涉及 | 仍需人工配置，否则首条条目报「未知前缀」（20:0x 已修复，见 §3.9） |
@@ -247,7 +247,7 @@ doclint: OK
 空条目文件返回 `needsDocs`、二次部署幂等。
 
 **既有项目回归（同步安装运行时后）**：对 `J:\ShiYan\CLion\temp`（已有 `DG-001..DG-004`）
-执行 `graphgen_deploy {confirm:true, vcs:"none"}`，日志为 `skip .../docs/CHANGELOG.md（已存在合法条目）`，
+执行 `gcgl_deploy {confirm:true, vcs:"none"}`，日志为 `skip .../docs/CHANGELOG.md（已存在合法条目）`，
 `docs.ready=true / seeded=false`；随后 `check` = **7 nodes / 9 edges / 0 errors / 0 warnings**，
 `doclint: OK`。说明种子逻辑不会改动已有关联文档的项目。
 
@@ -340,12 +340,12 @@ remember 后第二个项目自动建库、配置无密码字段”。已同步�
 - **期望**：
   ```json
   "suggestedNextActions": [
-    "graphgen_deploy { target: \"J:/ShiYan/CLion/temp\", confirm: true }"
+    "gcgl_deploy { target: \"J:/ShiYan/CLion/temp\", confirm: true }"
   ]
   ```
 - **实现提示**：在 `status` 的 project 段加数组，由 `needsDeploy` / `missing` / `vcs` 三态组合生成；
   文案要能直接复制执行。
-- **复测状态（19:5x）**：已落地。`status` 现在返回 3 条，除 `graphgen_deploy` 外还包括
+- **复测状态（19:5x）**：已落地。`status` 现在返回 3 条，除 `gcgl_deploy` 外还包括
   「部署后生成图谱」与「无 VCS 时 repo status 返回 not_applicable」的提示，见 §3.8。
 
 ### P0-3 提供 `adopt`：一条命令完成"接入"
@@ -384,7 +384,7 @@ remember 后第二个项目自动建库、配置无密码字段”。已同步�
 ### P1-2 提高"被想起"的概率
 
 - **现状**：Code Mode 里 MCP 需 `search()` 才暴露；`SKILL.md` 里没有"第一步做什么"。
-- **期望**：`SKILL.md` 顶部固定一段"进入任意项目的第一动作 = `graphgen_status`"；
+- **期望**：`SKILL.md` 顶部固定一段"进入任意项目的第一动作 = `gcgl_status`"；
   MCP instructions 的"路由"第一条就是它（目前第一条是"新项目/第一次用"）。
 - **实现提示**：在服务端 `initialize.instructions` 里把"新项目 → status"提到最前，
   并给出"status 返回 needsDeploy=true 时该说什么"的标准话术。
@@ -400,7 +400,7 @@ remember 后第二个项目自动建库、配置无密码字段”。已同步�
 
 - **现状**：`links` 只说"提交信息里写 DG-009 即可关联"。
 - **期望**：检测到零条目时，主动给出两个选项：
-  1. `graphgen_repo guard --stage commit-msg`（装钩子，提交时校验 ID 格式）；
+  1. `gcgl_repo guard --stage commit-msg`（装钩子，提交时校验 ID 格式）；
   2. 生成 `.gitmessage` 模板。
 - **实现提示**：`links` 的返回体加 `suggestions: [...]`，与 P0-2 同一套机制。
 
@@ -440,15 +440,15 @@ remember 后第二个项目自动建库、配置无密码字段”。已同步�
 ```powershell
 # 1) 看一个未接入的项目（应只读，不产生任何文件）
 #    观察到：installed=false, needsDeploy=true, vcs=null
-graphgen_status { root: "J:/ShiYan/CLion/temp" }
+gcgl_status { root: "J:/ShiYan/CLion/temp" }
 
 # 2) 对一个已安装的仓库触发探测
 #    观察到：22 条 copy/new/skip/upd，写入 docs/、tools/*.config.json，修改 .gitignore
-graphgen_repo { action: "detect", root: "F:/shiyan/CLion/opencode-graphgen" }
+gcgl_repo { action: "detect", root: "F:/shiyan/CLion/opencode-graphgen" }
 
 # 3) 部署进行中并发调用只读检查
 #    观察到：报错"目标正在被另一个进程部署（锁: .../.graphgen-deploy.lock）"
-graphgen_query { action: "check", root: "F:/shiyan/CLion/opencode-graphgen" }
+gcgl_query { action: "check", root: "F:/shiyan/CLion/opencode-graphgen" }
 
 # 4) 部署完成后再查 links
 #    观察到：扫描 5 个提交，无条目 ID
@@ -458,7 +458,7 @@ graphgen_query { action: "check", root: "F:/shiyan/CLion/opencode-graphgen" }
 
 | 步骤 | 期望 |
 |---|---|
-| 1 | 返回 `suggestedNextActions`，指向 `graphgen_deploy` |
+| 1 | 返回 `suggestedNextActions`，指向 `gcgl_deploy` |
 | 2 | 只返回探测结果，零写盘 |
 | 3 | 正常返回（读操作不受部署锁影响），或返回"部署中，稍后重试"且带 ttl |
 | 4 | 返回零条目 + 两条可执行建议（钩子 / 模板） |

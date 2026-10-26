@@ -99,7 +99,7 @@ node mcp\install.mjs --install-dir D:\tools\graphgen-mcp
 node mcp\install.mjs --install-dir D:\tools\graphgen-mcp --doctor
 ```
 
-- 全局注册 `mcp.graphgen`；**一份运行时**服务所有项目，新项目首次调用自动补引擎。
+- 全局注册 `mcp.gcgl`；**一份运行时**服务所有项目，新项目首次调用自动补引擎。
 - 工具：`status` / `deploy` / `query` / `repo` / `verify`（详见 `mcp/README.md`）。
 - 初始化 `initialize.instructions` 每轮注入：新项目先 `status`、缺引擎直接 `deploy`、
   改完文档 `generate` + `verify`、改完自己提交（不 push）。

@@ -1,17 +1,17 @@
 ## 文档图谱 graphgen + 防漂移 doclint（已安装）
 
-> 由全局 `graphgen` MCP 自动部署，或 `python install.py --target <本项目>` 安装（旧路 `python tools/graphgen.py --init`）。产物 `docs/graph.json` / `docs/GRAPH.md` / `docs/graph.mmd` 为 **AUTO-GENERATED，禁手改**。
+> 由全局 `gcgl` MCP 自动部署，或 `python install.py --target <本项目>` 安装（旧路 `python tools/graphgen.py --init`）。产物 `docs/graph.json` / `docs/GRAPH.md` / `docs/graph.mmd` 为 **AUTO-GENERATED，禁手改**。
 
 ### MCP 优先（推荐）
 
-- 已注册 `graphgen` MCP 时优先用：`graphgen_status`（体检）→ `graphgen_deploy {target, confirm:true}`（部署/同步）
-  → `graphgen_query`（query/generate/check/doclint）→ `graphgen_repo`（status/init/snapshot/links/guard）
-  → `graphgen_verify`（提交前聚合校验）。
+- 已注册 `gcgl` MCP 时优先用：`gcgl_status`（体检）→ `gcgl_deploy {target, confirm:true}`（部署/同步）
+  → `gcgl_query`（query/generate/check/doclint）→ `gcgl_repo`（status/init/snapshot/links/guard）
+  → `gcgl_verify`（提交前聚合校验）。
 - 新项目缺引擎时，`query/repo/verify` 先做冲突预检：无冲突自动部署；已有 AGENTS/工具/图谱等冲突只提示，确认后 `confirm:true, force:true`。
 - 首次部署若缺 `docs/CHANGELOG.md`，会写入合法种子条目（默认 `DG-001`）并补 `prefixes`/`allowOrphanEntries`；
   已有条目文件不覆盖。`docs.ready=false` 时不要写 AGENTS，先补条目。
 - 自动部署：已记住 git 身份时按配置建库并首次提交；没有身份时先问 `user.name/user.email`，确认“以后都用”后传 `identity` + `rememberIdentity:true`。未确认前不偷偷 `git init`。无 VCS 时 `repo status` 返回 `not_applicable`，快照用 `mode=fs`。
-- MCP 不做文件监听：改完文档显式 `graphgen_query action=generate`，再 `graphgen_verify`。
+- MCP 不做文件监听：改完文档显式 `gcgl_query action=generate`，再 `gcgl_verify`。
 - 没有 MCP 时，用下面 CLI 命令，效果相同。
 
 ### 汇报语言
@@ -47,7 +47,7 @@
 
 - **自动提交（常驻记忆）**：改完一批文件由 agent 自己 `git commit`，不要让用户手动提交；只 add 本次改动文件、
   带条目 ID、禁止 push / amend / 改全局 git 配置（`GRAPHGEN_AUTO_COMMIT=0` 可关）。
-- **部署/接入**：MCP `graphgen_deploy` 或 `install.py` 自动检测 `.git/.hg/.svn`。没有仓库且本机有 git → 按配置自动 `git init -b main` 并播种 `.gitignore`；
+- **部署/接入**：MCP `gcgl_deploy` 或 `install.py` 自动检测 `.git/.hg/.svn`。没有仓库且本机有 git → 按配置自动 `git init -b main` 并播种 `.gitignore`；
   MCP 首次需要用户确认 git 身份（只存 `user.name/user.email`，不存密码），确认后记住并默认建库+首次提交；未确认身份前只部署工具/文档。
   本机没有任何 VCS 工具 → 只打印安装指引（Windows `winget install --id Git.Git -e`），不阻断安装。
 - **体检**：`python tools/repo.py status`（VCS/分支/HEAD/远端/工作区/上游）。
@@ -56,7 +56,7 @@
   提交钩子用 `DOCLINT_SKIP_R8=1` 跳过 R8（提交本身会让快照变旧）。
 - **条目 ↔ 提交**：提交信息带条目 ID（`DG-009`、`Refs: AG-733`）；`python tools/repo.py links` 生成
   `docs/repo-links.json`，graphgen 侧表现为 `COMMIT:<短哈希>` 节点 + `touches` 边 →
-  `graphgen_query node=DG-009` 直接看「这条需求改过哪些提交」。
+  `gcgl_query node=DG-009` 直接看「这条需求改过哪些提交」。
 - **护栏**：`pre-commit` 调 `repo.py guard --stage commit`（文档改动未带 CHANGELOG、暂存大文件只警告）；
   `commit-msg` 检查条目 ID（默认警告；`tools/repo.config.json` 改 `entryIdMode=error` 才阻断）。
   护栏只读，**不执行** `add/commit/push`。

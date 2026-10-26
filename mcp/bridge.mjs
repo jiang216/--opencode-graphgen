@@ -73,7 +73,7 @@ export function runPython(cfg, script, args, opts = {}) {
 export function runEngine(cfg, root, scriptRel, args, opts = {}) {
   const script = path.join(root, scriptRel);
   if (!fs.existsSync(script)) {
-    throw new Error(`缺少 ${script}（先运行 graphgen_deploy 部署引擎）`);
+    throw new Error(`缺少 ${script}（先运行 gcgl_deploy 部署引擎）`);
   }
   return runPython(cfg, script, args, { ...opts, cwd: root });
 }

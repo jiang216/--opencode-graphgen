@@ -262,7 +262,7 @@ export function writeFsSnapshot(cfg, root) {
   const md = `# 项目文件快照（AUTO-GENERATED）
 
 > 该文件由 graphgen MCP 在无 VCS 项目中生成；\`mode=fs\`，记录 path / mtime / sha256。
-> 重新生成：\`graphgen_repo { action: "snapshot" }\`。
+> 重新生成：\`gcgl_repo { action: "snapshot" }\`。
 
 - 目标：\`${root}\`
 - 生成时间：${generatedAt}
