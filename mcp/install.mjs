@@ -491,6 +491,11 @@ async function main() {
     }
     if (report.error) process.stdout.write(`  ERROR ${report.error}\n`);
     process.stdout.write(report.ok ? "install: OK\n" : "install: FAIL\n");
+    if (report.ok && !args.doctor) {
+      process.stdout.write(
+        "  提示: 执行 `opencode reload`（或重启 opencode）后运行 `opencode mcp list` 确认 graphgen connected\n",
+      );
+    }
   }
   return report.ok ? 0 : 1;
 }
