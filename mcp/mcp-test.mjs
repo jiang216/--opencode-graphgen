@@ -14,9 +14,24 @@ const SERVER = path.join(HERE, "server.mjs");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "graphgen-mcp-test-"));
 const PROJ = path.join(TMP, "proj");
 const AUTO = path.join(TMP, "auto");
+const EMPTY = path.join(TMP, "empty");
+const CONFLICT = path.join(TMP, "conflict");
+const DOCS = path.join(TMP, "docs-conflict");
 const CONFIG = path.join(TMP, "config.json");
 fs.mkdirSync(PROJ, { recursive: true });
 fs.mkdirSync(AUTO, { recursive: true });
+fs.mkdirSync(EMPTY, { recursive: true });
+fs.mkdirSync(CONFLICT, { recursive: true });
+fs.mkdirSync(path.join(DOCS, "docs"), { recursive: true });
+fs.writeFileSync(path.join(AUTO, "README.md"), "# auto project\n");
+fs.writeFileSync(
+  path.join(CONFLICT, "AGENTS.md"),
+  "# 项目自有约定\n\n不要覆盖这一行。\n",
+);
+fs.writeFileSync(
+  path.join(DOCS, "docs/graph.json"),
+  JSON.stringify({ nodes: {}, edges: [] }, null, 2),
+);
 fs.writeFileSync(
   CONFIG,
   JSON.stringify(
@@ -26,7 +41,7 @@ fs.writeFileSync(
       autoDeploy: true,
       deploy: {
         vcs: "auto",
-        vcsInit: true,
+        vcsInit: false,
         vcsCommit: false,
         snapshot: true,
         agents: true,
@@ -201,6 +216,147 @@ try {
     String(autoStatus.json?.bootstrap?.reason),
   );
   check("自动部署后有引擎", fs.existsSync(path.join(AUTO, "tools/repo.py")));
+  check(
+    "有文件但无冲突时自动部署",
+    autoStatus.json?.result?.result === "not_applicable" &&
+      autoStatus.json?.result?.mode === "fs",
+    JSON.stringify(autoStatus.json?.result),
+  );
+  check(
+    "无 VCS 自动生成文件系统快照",
+    fs.existsSync(path.join(AUTO, "docs/repo.json")) &&
+      fs.existsSync(path.join(AUTO, "docs/REPO.md")),
+  );
+
+  const emptyStatus = body(
+    await call("tools/call", {
+      name: "repo",
+      arguments: { action: "status", root: EMPTY },
+    }),
+  );
+  check(
+    "空项目首次调用先自动部署",
+    emptyStatus.json?.bootstrap?.deployed === true &&
+      fs.existsSync(path.join(EMPTY, "tools/graphgen.py")),
+    String(emptyStatus.json?.bootstrap?.reason),
+  );
+  check(
+    "空项目自动部署不建 git",
+    !fs.existsSync(path.join(EMPTY, ".git")),
+  );
+
+  // 有冲突：只提示，不自动写盘；确认 force 后才追加/覆盖。
+  const conflictStatus = body(
+    await call("tools/call", {
+      name: "status",
+      arguments: { root: CONFLICT },
+    }),
+  );
+  check(
+    "status 报告冲突",
+    (conflictStatus.json?.project?.conflicts || []).some(
+      (c) => c.path === "AGENTS.md",
+    ),
+    JSON.stringify(conflictStatus.json?.project?.conflicts),
+  );
+  const conflictCall = body(
+    await call("tools/call", {
+      name: "repo",
+      arguments: { action: "status", root: CONFLICT },
+    }),
+  );
+  check("冲突时首次调用不自动部署", conflictCall.isError === true);
+  check(
+    "冲突时未写 tools",
+    !fs.existsSync(path.join(CONFLICT, "tools/graphgen.py")),
+  );
+  const conflictPlan = body(
+    await call("tools/call", {
+      name: "deploy",
+      arguments: { target: CONFLICT, confirm: true },
+    }),
+  );
+  check(
+    "deploy confirm 遇冲突返回 needsConfirm",
+    conflictPlan.json?.ok === false &&
+      conflictPlan.json?.needsConfirm === true &&
+      (conflictPlan.json?.conflicts || []).some((c) => c.path === "AGENTS.md"),
+    conflictPlan.text.slice(0, 120),
+  );
+  const forced = body(
+    await call("tools/call", {
+      name: "deploy",
+      arguments: { target: CONFLICT, confirm: true, force: true },
+    }),
+  );
+  check(
+    "deploy force 追加 AGENTS 并部署",
+    forced.json?.ok === true &&
+      fs.existsSync(path.join(CONFLICT, "tools/graphgen.py")) &&
+      fs
+        .readFileSync(path.join(CONFLICT, "AGENTS.md"), "utf8")
+        .includes("<!-- graphgen:installed -->"),
+    forced.text.slice(0, 120),
+  );
+  const conflictRepo = body(
+    await call("tools/call", {
+      name: "repo",
+      arguments: { action: "status", root: CONFLICT },
+    }),
+  );
+  check(
+    "无 VCS repo status=not_applicable",
+    conflictRepo.json?.ok === true &&
+      conflictRepo.json?.result?.result === "not_applicable" &&
+      conflictRepo.json?.result?.reason === "no_vcs",
+    JSON.stringify(conflictRepo.json?.result),
+  );
+  const conflictSnap = body(
+    await call("tools/call", {
+      name: "repo",
+      arguments: { action: "snapshot", root: CONFLICT },
+    }),
+  );
+  check(
+    "无 VCS repo snapshot=mode fs",
+    conflictSnap.json?.mode === "fs" &&
+      fs.existsSync(path.join(CONFLICT, "docs/repo.json")),
+    JSON.stringify(conflictSnap.json?.result),
+  );
+  const conflictLinks = body(
+    await call("tools/call", {
+      name: "repo",
+      arguments: { action: "links", root: CONFLICT },
+    }),
+  );
+  check(
+    "无 VCS links 返回 not_applicable + 建议",
+    conflictLinks.json?.result?.result === "not_applicable" &&
+      (conflictLinks.json?.result?.messages || []).length >= 2,
+    JSON.stringify(conflictLinks.json?.result?.messages),
+  );
+
+  const docsStatus = body(
+    await call("tools/call", { name: "status", arguments: { root: DOCS } }),
+  );
+  check(
+    "已有 docs/graph.json 报告冲突",
+    (docsStatus.json?.project?.conflicts || []).some(
+      (c) => c.path === "docs/graph.json",
+    ),
+    JSON.stringify(docsStatus.json?.project?.conflicts),
+  );
+  const docsCall = body(
+    await call("tools/call", {
+      name: "repo",
+      arguments: { action: "status", root: DOCS },
+    }),
+  );
+  check(
+    "文档库冲突时不自动部署",
+    docsCall.isError === true &&
+      !fs.existsSync(path.join(DOCS, "tools/graphgen.py")),
+  );
 
   const q = body(
     await call("tools/call", {

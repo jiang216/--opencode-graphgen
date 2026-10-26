@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isInside } from "./config.mjs";
-import { runInstall, sha256File } from "./bridge.mjs";
+import { runInstall, runRepo, sha256File } from "./bridge.mjs";
 
 // install.py 默认会复制到目标项目的文件（hooks 是可选步骤，不参与“是否已安装”判断）
 // [引擎内源路径, 目标项目内路径]
@@ -24,6 +24,202 @@ export const CONFIG_FILES = [
 
 const LOCK_NAME = ".graphgen-deploy.lock";
 const LOCK_STALE_MS = 10 * 60 * 1000;
+const AGENTS_MARKER = "<!-- graphgen:installed -->";
+const GENERATED_DOCS = ["docs/graph.json", "docs/GRAPH.md", "docs/graph.mmd"];
+const SNAPSHOT_DOCS = ["docs/repo.json", "docs/REPO.md", "docs/repo-links.json"];
+const SNAPSHOT_IGNORE_DIRS = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  "node_modules",
+  "out",
+  "build",
+  "dist",
+  ".vs",
+  "__pycache__",
+  ".cache",
+]);
+const MAX_HASH_BYTES = 5 * 1024 * 1024;
+
+export class ConflictError extends Error {
+  constructor(conflicts) {
+    super(
+      `部署冲突（${conflicts.length} 处）: ${conflicts
+        .map((c) => c.path)
+        .join(", ")}`,
+    );
+    this.name = "ConflictError";
+    this.code = "GRAPHGEN_CONFLICT";
+    this.conflicts = conflicts;
+  }
+}
+
+function listFiles(root) {
+  const out = [];
+  function walk(dir, rel = "") {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        walk(path.join(dir, entry.name), childRel);
+      } else if (entry.isFile()) {
+        out.push(childRel);
+      }
+    }
+  }
+  walk(root);
+  return out;
+}
+
+function inspectConflicts(cfg, root, info) {
+  const conflicts = [];
+  const seen = new Set();
+  const add = (rel, kind, detail) => {
+    if (seen.has(rel)) return;
+    seen.add(rel);
+    conflicts.push({ path: rel, kind, detail });
+  };
+
+  // 首次部署：目标已有同路径文件但内容不是当前引擎版本，覆盖会丢用户改动。
+  // 已部署项目视为受管副本，允许升级/补齐；AGENTS 仍单独判断。
+  if (!info.deployed) {
+    for (const rel of info.stale) {
+      add(rel, "modified", "目标文件与引擎版本不同");
+    }
+  }
+
+  // AGENTS.md 不是纯生成物：有内容且没有安装标记时，部署会追加片段。
+  const agents = path.join(root, "AGENTS.md");
+  if (fs.existsSync(agents) && fs.statSync(agents).isFile()) {
+    const text = fs.readFileSync(agents, "utf8");
+    if (text.trim() && !text.includes(AGENTS_MARKER)) {
+      add("AGENTS.md", "append", "已有 AGENTS.md，部署会追加 graphgen 片段");
+    }
+  }
+
+  // skills 目录是整体覆盖；额外文件或已修改文件都算冲突。
+  const srcSkills = path.join(cfg.engineRoot, "skills/graphgen");
+  const dstSkills = path.join(root, ".opencode/skills/graphgen");
+  if (fs.existsSync(dstSkills) && fs.statSync(dstSkills).isDirectory()) {
+    const srcSet = new Set(listFiles(srcSkills));
+    const dstSet = new Set(listFiles(dstSkills));
+    const extra = [...dstSet].filter((rel) => !srcSet.has(rel));
+    const changed = info.deployed
+      ? []
+      : [...dstSet].filter(
+          (rel) =>
+            srcSet.has(rel) &&
+            sha256File(path.join(srcSkills, rel)) !==
+              sha256File(path.join(dstSkills, rel)),
+        );
+    if (extra.length || changed.length) {
+      add(
+        ".opencode/skills/graphgen",
+        "directory",
+        `目录含额外/修改文件: ${[...extra, ...changed].slice(0, 5).join(", ")}`,
+      );
+    }
+  }
+
+  // 首次部署/补文件时，已有生成物或快照会被后续 generate/snapshot 覆盖。
+  // 已部署过的项目允许修复/同步，不把自身生成物当冲突。
+  if (info.needsDeploy && !info.deployed) {
+    for (const rel of [...GENERATED_DOCS, ...SNAPSHOT_DOCS]) {
+      if (fs.existsSync(path.join(root, rel))) {
+        add(rel, "generated", "已有生成/快照文件，部署或生成会覆盖");
+      }
+    }
+  }
+
+  return conflicts;
+}
+
+function writeJson(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
+}
+
+/**
+ * 无 VCS 项目的文件系统快照：path + mtime + sha256，供文档漂移/部署核对。
+ * 返回 null 表示未写入。
+ */
+export function writeFsSnapshot(cfg, root) {
+  const files = [];
+  let bytes = 0;
+  for (const rel of listFiles(root)) {
+    const top = rel.split("/")[0];
+    if (SNAPSHOT_IGNORE_DIRS.has(top)) continue;
+    if (rel === LOCK_NAME) continue;
+    if (SNAPSHOT_DOCS.includes(rel)) continue;
+    const abs = path.join(root, rel);
+    let st;
+    try {
+      st = fs.statSync(abs);
+    } catch {
+      continue;
+    }
+    const sha256 =
+      st.size <= MAX_HASH_BYTES ? sha256File(abs) : null;
+    files.push({
+      path: rel,
+      size: st.size,
+      mtime: new Date(st.mtimeMs).toISOString(),
+      sha256,
+    });
+    bytes += st.size;
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  const generatedAt = new Date().toISOString();
+  const data = {
+    mode: "fs",
+    target: root,
+    generatedAt,
+    summary: { files: files.length, bytes },
+    files,
+  };
+  const docs = path.join(root, "docs");
+  writeJson(path.join(docs, "repo.json"), data);
+
+  const rows = files
+    .map(
+      (f) =>
+        `| \`${f.path.replace(/\|/g, "\\|")}\` | ${f.size} | ${f.mtime} | \`${f.sha256 || "(跳过，文件过大)"}\` |`,
+    )
+    .join("\n");
+  const md = `# 项目文件快照（AUTO-GENERATED）
+
+> 该文件由 graphgen MCP 在无 VCS 项目中生成；\`mode=fs\`，记录 path / mtime / sha256。
+> 重新生成：\`graphgen_repo { action: "snapshot" }\`。
+
+- 目标：\`${root}\`
+- 生成时间：${generatedAt}
+- 文件数：${files.length}
+- 总字节：${bytes}
+
+| 文件 | 字节 | 修改时间 | SHA256 |
+|------|------|----------|--------|
+${rows || "| (空) | 0 | - | - |"}
+`;
+  fs.writeFileSync(path.join(docs, "REPO.md"), md, "utf8");
+  writeJson(path.join(docs, "repo-links.json"), {
+    mode: "fs",
+    generatedAt,
+    links: [],
+  });
+  return {
+    mode: "fs",
+    json: "docs/repo.json",
+    markdown: "docs/REPO.md",
+    links: "docs/repo-links.json",
+    files: files.length,
+    bytes,
+  };
+}
 
 export function inspectProject(cfg, root) {
   const missing = [];
@@ -49,11 +245,15 @@ export function inspectProject(cfg, root) {
     path.join(root, ".opencode/plugins/graphgen-watch.ts"),
   );
   const engineReady = fs.existsSync(path.join(cfg.engineRoot, "install.py"));
-  return {
+  const deployed =
+    fs.existsSync(path.join(root, "tools/graphgen.config.json")) ||
+    fs.existsSync(path.join(root, ".opencode/skills/graphgen/SKILL.md"));
+  const info = {
     root,
     engineRoot: cfg.engineRoot,
     engineReady,
     installed: engineReady && missing.length === 0,
+    deployed,
     missing,
     stale,
     missingConfigs,
@@ -69,6 +269,8 @@ export function inspectProject(cfg, root) {
     ),
     agents: fs.existsSync(path.join(root, "AGENTS.md")),
   };
+  info.conflicts = inspectConflicts(cfg, root, info);
+  return info;
 }
 
 export function deployFlags(options) {
@@ -124,10 +326,14 @@ export function mergeDeployOptions(cfg, overrides = {}) {
   return { ...cfg.deploy, ...overrides };
 }
 
-export async function deployProject(cfg, root, options = {}) {
+export async function deployProject(cfg, root, options = {}, { force = false } = {}) {
   const opts = mergeDeployOptions(cfg, options);
   if (root === cfg.engineRoot || isInside(root, cfg.engineRoot)) {
     throw new Error(`拒绝部署到引擎目录或其子目录: ${root}`);
+  }
+  const before = inspectProject(cfg, root);
+  if (!force && before.conflicts.length) {
+    throw new ConflictError(before.conflicts);
   }
   const lock = acquireLock(root);
   try {
@@ -138,11 +344,40 @@ export async function deployProject(cfg, root, options = {}) {
         `部署失败（install.py exit ${result.code}）:\n${(report.logs || []).join("\n")}`,
       );
     }
+
+    // install.py 对无 VCS 项目会跳过 snapshot；这里补文件系统快照。
+    let fsSnapshot = null;
+    if (opts.snapshot && !opts.dry_run) {
+      let vcs = null;
+      if (opts.vcs !== "none") {
+        try {
+          const detected = await runRepo(cfg, root, ["detect"]);
+          vcs = detected.data?.vcs || null;
+        } catch {
+          vcs = null;
+        }
+      }
+      if (!vcs) {
+        fsSnapshot = writeFsSnapshot(cfg, root);
+        report.logs = report.logs || [];
+        report.logs.push(
+          `snapshot  fs 模式写入 ${fsSnapshot.json} / ${fsSnapshot.markdown}`,
+          `links     fs 模式写入 ${fsSnapshot.links}（无提交）`,
+        );
+        report.summary = {
+          ...(report.summary || {}),
+          snapshot_fs: 2,
+          total: (report.summary?.total || 0) + 2,
+        };
+      }
+    }
+
     return {
       ok: true,
       target: root,
       options: opts,
       report,
+      fsSnapshot,
     };
   } finally {
     lock.release();
@@ -170,11 +405,25 @@ export async function ensureEngine(cfg, root, { force = false } = {}) {
   if (!cfg.autoDeploy && !force) {
     return { deployed: false, reason: "autoDeploy=false", info: before };
   }
-  const result = await deployProject(cfg, root, cfg.deploy);
-  return {
-    deployed: true,
-    reason: "deployed",
-    info: inspectProject(cfg, root),
-    report: result.report,
-  };
+  // 首次自动初始化不建 VCS：避免在已有项目里意外 git init。需要仓库时显式 deploy {vcsInit:true}。
+  const autoOptions = { ...cfg.deploy, vcsInit: false };
+  try {
+    const result = await deployProject(cfg, root, autoOptions, { force });
+    return {
+      deployed: true,
+      reason: "deployed",
+      info: inspectProject(cfg, root),
+      report: result.report,
+    };
+  } catch (e) {
+    if (e?.code === "GRAPHGEN_CONFLICT") {
+      return {
+        deployed: false,
+        reason: "conflict",
+        info: { ...before, conflicts: e.conflicts },
+        conflicts: e.conflicts,
+      };
+    }
+    throw e;
+  }
 }

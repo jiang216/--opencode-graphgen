@@ -7,7 +7,7 @@
   "autoDeploy": true,
   "deploy": {
     "vcs": "auto",
-    "vcsInit": true,
+    "vcsInit": false,
     "vcsCommit": false,
     "snapshot": true,
     "agents": true,

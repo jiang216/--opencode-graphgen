@@ -6,7 +6,7 @@
 ## 为什么
 
 - 旧模式：每个项目一份 `.opencode/plugins/graphgen-watch.ts` + 一套 `tools/*.py`，还得回本仓库执行 `install.py`。
-- MCP 模式：**一份运行时** + 全局注册；新项目首次调用 `graphgen_repo` / `graphgen_query` 时自动补齐引擎。
+- MCP 模式：**一份运行时** + 全局注册；新项目首次调用 `graphgen_repo` / `graphgen_query` 时先做冲突预检，无冲突自动补齐引擎。
 - 不再有文件监听常驻；生成改为显式 `graphgen_query action=generate`（想保留监听可用 `install.py --plugin`）。
 
 ## 安装（一次）
@@ -36,17 +36,20 @@ node mcp/install.mjs --link
 
 | 工具 | 作用 | 写盘 |
 |---|---|---|
-| `status` | 服务端/引擎/Python + 目标项目体检（缺失/过期/配置/VCS/快照/旧插件） | 否 |
-| `deploy` | 部署/同步全家桶；默认只出计划，`confirm=true` 才写 | 是 |
+| `status` | 服务端/引擎/Python + 目标项目体检（缺失/过期/配置/VCS/快照/旧插件/冲突/下一步建议） | 否 |
+| `deploy` | 部署/同步全家桶；默认只出计划，`confirm=true` 才写；冲突需 `force=true` | 是 |
 | `query` | `query/generate/check/doclint` | `generate` 写产物 |
-| `repo` | `detect/status/init/snapshot/links/guard`；`init` 需 `confirm=true` | 按动作 |
+| `repo` | `detect/status/init/snapshot/links/guard`；`init` 需 `confirm=true`；无 VCS 自动降级 | 按动作 |
 | `verify` | `graphgen --check` + `doclint` + `repo status` 聚合 | 否 |
 
 > 工具在 opencode 中通常显示为 `graphgen_status` / `graphgen_deploy` …；若宿主用 `graphgen.status`
 > 形式，以实际工具列表为准。
 
-缺引擎时，`query` / `repo` / `verify` 会**先自动部署**再执行（`autoDeploy: true` 时）。
-`status` 永远只读，用来先看计划。
+缺引擎时，`query` / `repo` / `verify` 会先做**部署预检**，再决定是否自动部署（`autoDeploy: true` 时）：
+
+- 项目为空或只有普通业务文件：无冲突，先部署，再继续当前操作；
+- 已有 `AGENTS.md`、被改过的 `tools/graphgen.py`、已有 `docs/graph.json`/快照等：返回 `conflicts`，**不写盘**；确认后 `graphgen_deploy {target, confirm:true, force:true}`；
+- `status` 永远只读，返回 `conflicts` 和 `suggestedNextActions`。
 
 ## 配置
 
@@ -61,7 +64,7 @@ node mcp/install.mjs --link
   "autoDeploy": true,
   "sourceRoot": "F:\\shiyan\\CLion\\opencode-graphgen",
   "deploy": {
-    "vcs": "auto", "vcsInit": true, "vcsCommit": false,
+    "vcs": "auto", "vcsInit": false, "vcsCommit": false,
     "snapshot": true, "agents": true, "hooks": false,
     "plugin": false, "removePlugin": false
   },
@@ -72,6 +75,8 @@ node mcp/install.mjs --link
 
 - `autoDeploy=false`：任何工具都不自动写盘，只返回 `needsDeploy` / 计划。
 - `sourceRoot`：MCP 源仓库，自动部署会跳过它，避免把工具仓库本身当消费项目改写。
+- 首次自动部署**不建 VCS**（不会意外 `git init`）；需要仓库时显式 `deploy {vcsInit:true}` 或 `repo init`。
+- 首次部署前会检查冲突：已有 AGENTS、被修改的工具文件、已有图谱/快照等只提示，确认后加 `force=true`。
 - `deploy.hooks`：默认关；要 pre-commit 硬闸时打开。
 - `deploy.plugin`：默认关；需要“保存即重生成”时打开。
 - 环境变量：`GRAPHGEN_CONFIG`（配置路径）、`GRAPHGEN_PYTHON`（解释器）、`GRAPHGEN_AUTO_COMMIT=0`（关闭提交记忆）。
@@ -92,12 +97,12 @@ node mcp/install.mjs --install-dir D:\tools\graphgen-mcp --uninstall          # 
 node mcp/install.mjs --install-dir D:\tools\graphgen-mcp --uninstall --purge  # 连运行时一起删
 ```
 
-已有的项目侧文件（`tools/*.py`、插件、快照）不会被删；需要时在各项目里手动清理或 `deploy --remove-plugin`。
+已有的项目侧文件（`tools/*.py`、插件、快照）默认不删；冲突文件默认不覆盖，确认后加 `force=true` 才写。
 
 ## 边界
 
 - 不监听文件变化、不常驻 watcher；`query generate` 是显式动作。
 - 不自动 push、不 amend 他人提交、不改全局 git 配置。
-- `deploy`/`init` 默认先出计划；要写盘必须 `confirm=true`。
+- `deploy`/`init` 默认先出计划；要写盘必须 `confirm=true`，有冲突再加 `force=true`。
 - 目标必须在引擎目录之外；拒绝把引擎装进自身。
 - 合并到其他 MCP 工具箱（含 `libs` 单进程）留到下一版，本期独立运行。

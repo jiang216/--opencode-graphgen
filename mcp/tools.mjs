@@ -4,18 +4,20 @@ import path from "node:path";
 import { isInside, resolvePython, resolveRoot } from "./config.mjs";
 import { runEngine, runRepo } from "./bridge.mjs";
 import {
+  ConflictError,
   deployFlags,
   deployProject,
   ensureEngine,
   inspectProject,
   mergeDeployOptions,
+  writeFsSnapshot,
 } from "./ensure.mjs";
 
 const TOOL_DEFS = [
   {
     name: "status",
     description:
-      "只读体检：本机 graphgen 引擎位置/Python、目标项目是否已装引擎（缺失/过期文件）、配置/技能/AGENTS/VCS/快照/旧插件，并给出 needsDeploy。",
+      "只读体检：本机 graphgen 引擎位置/Python、目标项目是否已装引擎（缺失/过期文件）、配置/技能/AGENTS/VCS/快照/旧插件，并给出 needsDeploy、conflicts 与 suggestedNextActions。",
     inputSchema: {
       type: "object",
       properties: {
@@ -27,16 +29,17 @@ const TOOL_DEFS = [
   {
     name: "deploy",
     description:
-      "把 graphgen 全家桶部署/同步到目标项目（tools、模板、技能、AGENTS、VCS、快照、可选钩子）。默认只返回计划；confirm=true 才写盘。只做增量复制/建配置，不删除、不提交、不 push。",
+      "把 graphgen 全家桶部署/同步到目标项目（tools、模板、技能、AGENTS、VCS、快照、可选钩子）。默认只返回计划；confirm=true 才写盘。首次部署先做冲突预检：有冲突返回 needsConfirm=true，确认后加 force=true；只做增量复制/建配置，不删除、不提交、不 push。",
     inputSchema: {
       type: "object",
       properties: {
         target: { type: "string", description: "目标项目根目录（绝对或相对当前目录）" },
         confirm: { type: "boolean", description: "true=真正写盘；缺省只出计划" },
+        force: { type: "boolean", description: "true=确认覆盖/追加冲突文件（先看 conflicts）" },
         dryRun: { type: "boolean", description: "true=强制只出计划" },
         hooks: { type: "boolean", description: "安装 pre-commit/commit-msg 并启用 core.hooksPath" },
         vcs: { type: "string", enum: ["auto", "git", "hg", "svn", "none"] },
-        vcsInit: { type: "boolean", description: "无仓库时是否自动建库（默认 true）" },
+        vcsInit: { type: "boolean", description: "无仓库时是否自动建库（MCP 默认 false；首次自动部署不建库）" },
         vcsRemote: { type: "string" },
         vcsBranch: { type: "string" },
         vcsCommit: { type: "boolean", description: "建库后首次提交（默认 false）" },
@@ -70,7 +73,7 @@ const TOOL_DEFS = [
   {
     name: "repo",
     description:
-      "代码仓库管理（git/hg/svn 统一）：detect/status/init/snapshot/links/guard。init 需 confirm=true；guard 只读，不执行 add/commit/push。缺引擎时会先自动部署。",
+      "代码仓库管理（git/hg/svn 统一）：detect/status/init/snapshot/links/guard。init 需 confirm=true；guard 只读，不执行 add/commit/push。缺引擎时先做冲突预检，无冲突才自动部署；无 VCS 时 status/links/guard 返回 not_applicable，snapshot 用文件系统模式。",
     inputSchema: {
       type: "object",
       properties: {
@@ -147,6 +150,16 @@ async function prepare(cfg, rootArg) {
           `如确实要把它当消费项目安装，显式调用 graphgen_deploy {target:"${root}", confirm:true}`,
       );
     }
+    if (bootstrap.reason === "conflict") {
+      const list = (bootstrap.conflicts || [])
+        .map((c) => `- ${c.path} [${c.kind}] ${c.detail}`)
+        .join("\n");
+      throw new Error(
+        `项目 ${root} 未部署 graphgen，但部署会改动已有文件：\n${list}\n` +
+          `确认覆盖/追加后执行 graphgen_deploy {target:"${root}", confirm:true, force:true}；` +
+          `或先备份/合并冲突文件。`,
+      );
+    }
     throw new Error(
       `项目 ${root} 缺少/过期 graphgen 引擎（原因: ${bootstrap.reason}）。` +
         `请调用 graphgen_deploy {target:"${root}", confirm:true}，或在 mcp/config.json 打开 autoDeploy`,
@@ -181,6 +194,37 @@ export function buildTools(cfg, version) {
         const protectedRoots = [cfg.sourceRoot, ...(cfg.protectedRoots || [])]
           .filter(Boolean)
           .map((p) => path.resolve(cfg.configDir || process.cwd(), String(p)));
+        const suggestedNextActions = [];
+        const hasVcsMarker = [".git", ".hg", ".svn"].some((name) =>
+          fs.existsSync(path.join(root, name)),
+        );
+
+        if (!info.engineReady) {
+          suggestedNextActions.push(
+            "graphgen MCP 引擎缺失：先运行 node mcp/install.mjs 或检查 mcp/config.json 的 engineRoot",
+          );
+        } else if (info.needsDeploy) {
+          if (info.conflicts.length) {
+            suggestedNextActions.push(
+              `graphgen_deploy {target:${JSON.stringify(root)}, confirm:true, force:true}  ` +
+                `# 先确认 ${info.conflicts.length} 处冲突`,
+            );
+          } else {
+            suggestedNextActions.push(
+              `graphgen_deploy {target:${JSON.stringify(root)}, confirm:true}`,
+            );
+          }
+        }
+        if (info.needsDeploy && !info.deployed) {
+          suggestedNextActions.push(
+            `graphgen_query {action:"generate", root:${JSON.stringify(root)}}  # 部署后生成图谱`,
+          );
+        }
+        if ((!vcs || (typeof vcs === "object" && !vcs.vcs)) && !hasVcsMarker) {
+          suggestedNextActions.push(
+            "无 VCS：repo status 返回 not_applicable；需要文件快照时用 graphgen_deploy（snapshot=true）",
+          );
+        }
         return {
           server: {
             name: "graphgen",
@@ -194,6 +238,7 @@ export function buildTools(cfg, version) {
           project: {
             ...info,
             vcs,
+            suggestedNextActions,
             autoDeploySkipped: protectedRoots.includes(root)
               ? "source-root"
               : null,
@@ -223,6 +268,7 @@ export function buildTools(cfg, version) {
           if (args[key] !== undefined) overrides[key] = args[key];
         }
         const opts = mergeDeployOptions(cfg, overrides);
+        const force = args.force === true;
         const write = args.confirm === true && args.dryRun !== true;
         if (!write) {
           const info = inspectProject(cfg, root);
@@ -234,14 +280,36 @@ export function buildTools(cfg, version) {
             options: opts,
             flags: deployFlags(opts),
             info,
-            note: "只出计划，未写盘；确认后传 confirm=true。",
+            conflicts: info.conflicts,
+            needsConfirm: info.conflicts.length > 0,
+            safeToAutoDeploy: info.conflicts.length === 0,
+            note:
+              info.conflicts.length > 0
+                ? "检测到冲突：确认覆盖/追加后传 confirm=true, force=true。"
+                : "只出计划，未写盘；确认后传 confirm=true。",
           };
         }
-        const result = await deployProject(cfg, root, overrides);
-        return {
-          ...result,
-          info: inspectProject(cfg, root),
-        };
+        try {
+          const result = await deployProject(cfg, root, overrides, { force });
+          return {
+            ...result,
+            info: inspectProject(cfg, root),
+          };
+        } catch (e) {
+          if (e instanceof ConflictError || e?.code === "GRAPHGEN_CONFLICT") {
+            const info = inspectProject(cfg, root);
+            return {
+              ok: false,
+              needsConfirm: true,
+              target: root,
+              conflicts: e.conflicts || info.conflicts,
+              info,
+              message:
+                "部署会改动已有文件，未写盘。确认后调用 graphgen_deploy {target, confirm:true, force:true}，或先备份/合并冲突文件。",
+            };
+          }
+          throw e;
+        }
       }
 
       case "query": {
@@ -328,6 +396,58 @@ export function buildTools(cfg, version) {
           if (args.messageFile) argv.push("--message-file", args.messageFile);
         }
         const r = await runRepo(cfg, root, argv);
+        const noVcs =
+          r.data &&
+          (r.data.result === "no-repo" ||
+            r.data.result === "no-vcs" ||
+            (Array.isArray(r.data.messages) &&
+              r.data.messages.some((m) => /未检测到代码仓库/.test(m))));
+        if (noVcs && action === "snapshot") {
+          const snap = writeFsSnapshot(cfg, root);
+          return {
+            ok: true,
+            action,
+            root,
+            bootstrap,
+            mode: "fs",
+            result: {
+              action,
+              result: "ok",
+              reason: "no_vcs",
+              mode: "fs",
+              snapshot: snap,
+              messages: ["warn  未检测到代码仓库，已改用文件系统快照（path/mtime/sha256）"],
+            },
+            stdout: r.stdout.trim(),
+            stderr: r.stderr.trim(),
+          };
+        }
+        if (noVcs && ["status", "links", "guard"].includes(action)) {
+          return {
+            ok: true,
+            action,
+            root,
+            bootstrap,
+            mode: "fs",
+            result: {
+              action,
+              result: "not_applicable",
+              reason: "no_vcs",
+              mode: "fs",
+              messages: [
+                "warn  未检测到代码仓库：该操作不适用（not_applicable）",
+                ...(action === "links"
+                  ? [
+                      "建议 1：git init 后安装 commit-msg 钩子，提交信息写 DG-### 等项目 ID",
+                      "建议 2：保持无 VCS，改用 docs/CHANGELOG.md 手工维护条目",
+                    ]
+                  : []),
+              ],
+            },
+            stdout: r.stdout.trim(),
+            stderr: r.stderr.trim(),
+          };
+        }
         return {
           ok: r.ok,
           action,
@@ -346,6 +466,9 @@ export function buildTools(cfg, version) {
         const gg = await runEngine(cfg, root, path.join("tools", "graphgen.py"), ["--check"]);
         const dl = await runEngine(cfg, root, path.join("tools", "doclint.py"), []);
         const repo = await runRepo(cfg, root, ["status"]);
+        const noVcs =
+          repo.data &&
+          (repo.data.result === "no-repo" || repo.data.result === "no-vcs");
         return {
           ok: gg.code === 0 && dl.code === 0,
           root,
@@ -353,9 +476,16 @@ export function buildTools(cfg, version) {
           graphgen: output(gg),
           doclint: output(dl),
           repo: {
-            ok: repo.ok,
+            ok: repo.ok || noVcs,
             code: repo.code,
-            result: repo.data,
+            result: noVcs
+              ? {
+                  ...repo.data,
+                  result: "not_applicable",
+                  reason: "no_vcs",
+                  mode: "fs",
+                }
+              : repo.data,
           },
         };
       }

@@ -32,9 +32,9 @@ node mcp\install.mjs --install-dir D:\tools\graphgen-mcp --doctor
 #    graphgen_verify
 ```
 
-新项目第一次调用 `graphgen_query` / `graphgen_repo` / `graphgen_verify` 时会**自动补齐引擎**
-（`autoDeploy: true`）；也可用 `graphgen_deploy` 先出计划再确认。
-详见 [mcp/README.md](mcp/README.md)。
+新项目第一次调用 `graphgen_query` / `graphgen_repo` / `graphgen_verify` 时会先做**冲突预检**：
+无冲突自动补齐引擎（`autoDeploy: true`），有冲突只返回 `conflicts`，确认后 `graphgen_deploy {target, confirm:true, force:true}`。
+也可先 `graphgen_status` 看 `suggestedNextActions`。详见 [mcp/README.md](mcp/README.md)。
 
 ## 传统安装（无 MCP / 需要文件监听）
 
@@ -77,8 +77,9 @@ python tools/doclint.py             # 文档防漂移
 5. **护栏**：pre-commit / commit-msg 调 `repo.py guard`（只读，默认只警告，不执行 add/commit/push）。
 6. **自动提交记忆**：MCP `initialize.instructions` 每轮注入约定——改完由 agent 自己 `git commit`
    （只提交本次改动文件、带条目 ID、禁止 push），不需要用户每次手动提交；`GRAPHGEN_AUTO_COMMIT=0` 可关闭。
-7. **自动部署**：全局 MCP 对新项目首次调用 `graphgen_query/repo/verify` 时自动补齐上述全部能力
-   （默认不装插件、不提交、不 push）。
+7. **自动部署**：全局 MCP 对新项目首次调用 `graphgen_query/repo/verify` 时先做冲突预检；
+   空项目或普通业务文件无冲突时自动补齐上述全部能力，已有 AGENTS/工具/图谱等冲突则只提示
+   （默认不装插件、不建 VCS、不提交、不 push）。
 
 | 开关 | 作用 |
 |------|------|

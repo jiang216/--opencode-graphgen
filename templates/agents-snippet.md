@@ -7,7 +7,8 @@
 - 已注册 `graphgen` MCP 时优先用：`graphgen_status`（体检）→ `graphgen_deploy {target, confirm:true}`（部署/同步）
   → `graphgen_query`（query/generate/check/doclint）→ `graphgen_repo`（status/init/snapshot/links/guard）
   → `graphgen_verify`（提交前聚合校验）。
-- 新项目缺引擎时 `query/repo/verify` 会自动部署；源仓库不自动改写。
+- 新项目缺引擎时，`query/repo/verify` 先做冲突预检：无冲突自动部署；已有 AGENTS/工具/图谱等冲突只提示，确认后 `confirm:true, force:true`。
+- 自动部署不建 VCS；无 VCS 时 `repo status` 返回 `not_applicable`，快照用 `mode=fs`。
 - MCP 不做文件监听：改完文档显式 `graphgen_query action=generate`，再 `graphgen_verify`。
 - 没有 MCP 时，用下面 CLI 命令，效果相同。
 

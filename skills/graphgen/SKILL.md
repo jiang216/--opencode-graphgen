@@ -22,13 +22,14 @@ description: Run the graphgen knowledge-graph generator/linter, the doclint anti
 
 | 工具 | 用途 |
 |------|------|
-| `graphgen_status` | 只读体检：引擎/配置/VCS/快照，`needsDeploy` |
-| `graphgen_deploy` | 部署/同步；默认只出计划，`confirm=true` 才写 |
+| `graphgen_status` | 只读体检：引擎/配置/VCS/快照/冲突，`needsDeploy` / `suggestedNextActions` |
+| `graphgen_deploy` | 部署/同步；默认只出计划，`confirm=true` 才写；冲突需 `force=true` |
 | `graphgen_query` | `query`（节点/反链）/ `generate` / `check` / `doclint` |
-| `graphgen_repo` | `status` / `init` / `snapshot` / `links` / `guard` |
+| `graphgen_repo` | `status` / `init` / `snapshot` / `links` / `guard`；无 VCS 返回 `not_applicable` |
 | `graphgen_verify` | graphgen + doclint + repo status 一次跑完 |
 
-- 新项目缺引擎：`graphgen_deploy {target, confirm:true}`；`query/repo/verify` 也会自动补引擎。
+- 新项目缺引擎：先 `graphgen_status`；无冲突时 `query/repo/verify` 自动部署，有冲突只提示，确认后 `graphgen_deploy {target, confirm:true, force:true}`。
+- 自动部署不建 VCS；需要仓库时显式 `repo init` 或 `deploy {vcsInit:true}`。
 - MCP 不做文件监听：改完文档显式 `graphgen_query action=generate`；想保存即重生成再装 `--plugin`。
 - 提交记忆由 MCP `initialize.instructions` 注入（`GRAPHGEN_AUTO_COMMIT=0` 可关）。
 - 没有 MCP 时，下面命令仍全部可用。

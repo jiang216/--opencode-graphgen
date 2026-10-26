@@ -50,7 +50,8 @@ node <本仓库>\mcp\install.mjs --link
   写入全局 `~/.config/opencode/opencode.json` 的 `mcp.graphgen`（先备份、原子写），并做 MCP 自检。
 - **重启 opencode** 后生效。项目级注册：`--scope project --target <项目>`。
 - 之后在任意项目里：`graphgen_status` → `graphgen_deploy {target, confirm:true}`；
-  首次调用 `graphgen_query/repo/verify` 也会自动补引擎（`autoDeploy: true`）。
+  首次调用 `graphgen_query/repo/verify` 会先做冲突预检，无冲突自动补引擎（`autoDeploy: true`），
+  有冲突只返回 `conflicts`，确认后加 `force:true`。
 - 详见 [mcp/README.md](mcp/README.md)。
 
 ### 方式 B：统一安装器（无 MCP / 需要离线拷贝）
@@ -202,7 +203,9 @@ node mcp\install.mjs --install-dir D:\tools\graphgen-mcp --uninstall --purge  # 
 - **MCP 工具看不到**：确认已重启 opencode；跑 `node mcp\install.mjs --doctor` 看注册/自检；
   `opencode.json` 里应有 `mcp.graphgen`（`type=local`，`GRAPHGEN_CONFIG` 指向 `config.json`）。
 - **新项目没有自动部署**：检查 `mcp/config.json` 的 `autoDeploy` 是否为 `true`；
-  源仓库（`sourceRoot`）会被自动跳过，需显式 `graphgen_deploy`。也可先 `graphgen_status` 看 `needsDeploy`。
+  源仓库（`sourceRoot`）会被自动跳过。若 `graphgen_status` 返回 `conflicts`，说明部署会改动已有文件
+  （AGENTS、被改过的工具、已有图谱/快照等），确认后执行
+  `graphgen_deploy {target, confirm:true, force:true}`；也可先 `graphgen_status` 看 `suggestedNextActions`。
 - **默认没有文件监听**：v0.3 默认只装 MCP；需要保存即重生成时用 `install.py --plugin`，或改完文档跑
   `graphgen_query action=generate`。
 - **中文乱码**：先 `$env:PYTHONIOENCODING='utf-8'`。

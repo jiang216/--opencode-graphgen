@@ -23,7 +23,7 @@ export const DEFAULT_CONFIG = {
   protectedRoots: [],
   deploy: {
     vcs: "auto",
-    vcsInit: true,
+    vcsInit: false,
     vcsCommit: false,
     snapshot: true,
     agents: true,

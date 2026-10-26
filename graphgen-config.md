@@ -105,9 +105,9 @@ node mcp\install.mjs --install-dir D:\tools\graphgen-mcp --doctor
 |------|------|------|
 | `engineRoot` | `../engine` | 引擎目录（相对 config.json） |
 | `python` | `auto` | `python` / `py -3` / 绝对路径 |
-| `autoDeploy` | `true` | 缺引擎时自动部署（`false` 只报告） |
+| `autoDeploy` | `true` | 缺引擎时先做冲突预检，无冲突自动部署（`false` 只报告） |
 | `sourceRoot` | 安装时写入 | MCP 源仓库；自动部署跳过它 |
-| `deploy.vcs` / `vcsInit` | `auto` / `true` | 无仓库自动建库 |
+| `deploy.vcs` / `vcsInit` | `auto` / `false` | 无仓库不自动建库；需要时显式打开 |
 | `deploy.vcsCommit` | `false` | 建库后不自动提交 |
 | `deploy.hooks` / `plugin` | `false` | 默认不装钩子、不装监听插件 |
 | `deploy.snapshot` / `agents` | `true` | 生成快照 / 追加 AGENTS 片段 |

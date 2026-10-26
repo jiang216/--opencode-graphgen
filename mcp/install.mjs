@@ -202,7 +202,7 @@ function ensureConfig(configPath, engineRoot) {
   if (!data.deploy) {
     data.deploy = {
       vcs: "auto",
-      vcsInit: true,
+      vcsInit: false,
       vcsCommit: false,
       snapshot: true,
       agents: true,
