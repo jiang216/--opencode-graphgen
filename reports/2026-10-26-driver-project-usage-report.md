@@ -43,6 +43,7 @@
 3. **非 VCS 项目当前是"静默空转"**：`vcs: null` 之后 repo 系列没有任何降级说明，文档图谱能力也被一起放弃。
 4. **条目 ID 文化门槛过高**：`links` 扫完 5 个提交，只得到一句"未发现条目 ID"，没有可执行的引导。
 5. 对"纯编译/工具链排错"类任务，graphgen 当前**收益接近 0、接入成本不为 0**，这是它被跳过的根本原因——这一点需要在产品定位上说清楚（见 §5 P2-4）。
+6. **部署成功 ≠ 可用**：`deploy` 返回 `ok:true` 后，第一次 `generate` 必报 `entry file not found: docs/CHANGELOG.md`；补完条目还撞「未知前缀」，补完文档还有孤儿警告——全新接入一共 4 个手工决策点，全部卡在"第一条条目"（见 §3.7）。
 
 ---
 
@@ -164,6 +165,55 @@ links  扫描 5 提交，未发现条目 ID（提交信息里写 DG-009 之类�
 | 18:0x–18:5x | CDN 限流，ISO 分片下载反复 400；改为 NuGet 补 WDK |
 | 18:5x | 驱动 Debug / Release 编译通过（`DemoDriver.sys` + `democtl.exe`） |
 | 19:0x | 本次 graphgen 观测：status / detect / check |
+| 19:1x | 驱动工程里的自动部署产物消失（`AGENTS.md`/`tools/`/`docs/` 均不存在） |
+| 19:5x | 按新版指令补部署 → 首次 `generate` 报 1 error → 补 `CHANGELOG.md` + 功能文档后转绿 |
+
+### 3.7 补充观测（19:5x 复测）：部署成功 ≠ 可生成，首次 `generate` 必败
+
+按新版指令执行 `graphgen_deploy {confirm:true, vcs:"none"}`，日志尾部明确 `new AGENTS.md`、9 个工具/配置文件、`.opencode/skills/graphgen/`，返回 `ok: true`。紧接着 `query action=generate`：
+
+```
+[graphgen] wrote J:/ShiYan/CLion/temp/docs/graph.json
+[graphgen] wrote .../GRAPH.md
+[graphgen] wrote .../graph.mmd
+[graphgen] done: 2 nodes, 1 edges, 1 errors, 0 warnings
+
+[stderr]
+ERROR: entry file not found: docs/CHANGELOG.md
+```
+
+原因很直接：模板 `entryFiles` 指向 `docs/CHANGELOG.md`，而**部署过程不创建这个文件**。也就是说，任何"全新接入"的项目，第一次构建图谱都是失败态。
+
+补两份文档后才转绿：
+
+| 补齐物 | 作用 |
+|---|---|
+| `docs/CHANGELOG.md`（DG-001…DG-004） | 满足 `entryFiles.heading` + R7（编号连续、标题带日期） |
+| `docs/DRIVER.md`（功能文档 + 7 条回归清单） | 消除 4 条「孤儿条目（无任何文档引用）」警告 |
+
+补齐后：`generate` / `check` = **7 nodes / 9 edges / 0 errors / 0 warnings**，`doclint` = `OK`。
+
+> **对插件开发的含义**：`deploy` 的 `ok:true` 不代表接入完成，真正的验收点是紧接着的 `generate` 返回码。
+> 若 `deploy` 能顺带落一个最小 `CHANGELOG.md`（注释 + 一条占位条目），冷启动失败率可直接归零。
+
+顺带一条配置观察：模板生成的 `tools/graphgen.config.json` 里 `prefixes: {}` 为空，
+而 `entryFiles` 又要求 `[A-Z]+-\d+` 形式的条目 ID —— 首次写 `DG-001` 会立刻报
+`未知前缀: DG`。也就是说「用哪个前缀」必须由人先改配置，才能写第一条。
+
+### 3.8 复测：指令与工具在同一天内被更新（部分建议已落地）
+
+19:5x 复测时，MCP 侧行为与报告成文时（19:0x）已不同：
+
+| 观察点 | 报告成文时 | 复测时 |
+|---|---|---|
+| `status` 返回 | 只有 `needsDeploy` | 增加 `suggestedNextActions`（3 条可直接执行的命令） |
+| 部署入口 | `repo detect` 隐式部署 | 独立 `graphgen_deploy`，带 `dryRun`/`confirm`/`force`/`snapshot` |
+| 冲突预检 | 无 | `conflicts` 数组，非空需 `force:true` |
+| 非 VCS | 静默空转 | `vcs:"none"` 时明确 `skip 代码仓库管理`，`status` 提示「repo status 返回 not_applicable」 |
+| `prefixes` | 未涉及 | 仍需人工配置，否则首条条目报「未知前缀」 |
+
+结论：P0-1（只读探测）、P0-2（`suggestedNextActions`）、P0-4（非 VCS 降级）的方向**已被采纳**；
+本次新增的 P0-3 证据（首次 `generate` 必败）是下一优先级。
 
 ---
 
@@ -188,6 +238,11 @@ links  扫描 5 提交，未发现条目 ID（提交信息里写 DG-009 之类�
 - 只在 `status` 里出现，不主动推送；
 - 不告诉 agent"下一条命令是什么"；
 - 部署本身要 `confirm: true`，属于"要用户拍板"的操作，agent 更不会主动做。
+
+> 19:5x 复测：前两条已解决（`suggestedNextActions` 返回可直接执行的命令），第三条仍是设计上的张力——
+> MCP 指令要求「`conflicts=[]` 时直接 `deploy confirm:true`」，但 `deploy` 语义上又写着"写盘需确认"。
+> 二者并存时，agent 容易停在"我已经 status 过了"。建议在 `status` 的返回里直接标注
+> `autoSafe: true`（表示无冲突、可直接部署），把判断从文档挪到数据里。
 
 ### 4.3 版本库层：非 git 项目直接失去一半能力
 
@@ -232,13 +287,22 @@ links  扫描 5 提交，未发现条目 ID（提交信息里写 DG-009 之类�
   ```
 - **实现提示**：在 `status` 的 project 段加数组，由 `needsDeploy` / `missing` / `vcs` 三态组合生成；
   文案要能直接复制执行。
+- **复测状态（19:5x）**：已落地。`status` 现在返回 3 条，除 `graphgen_deploy` 外还包括
+  「部署后生成图谱」与「无 VCS 时 repo status 返回 not_applicable」的提示，见 §3.8。
 
 ### P0-3 提供 `adopt`：一条命令完成"接入"
 
 - **现状**：部署 → 建 docs → generate 是三步，且第二步（条目）需要人写。
+- **复测证据（19:5x）**：这条已从"推测"变成"实测"——`deploy` 返回 `ok:true` 之后，
+  紧接着的 `generate` **必然**报 `ERROR: entry file not found: docs/CHANGELOG.md`（1 error），
+  因为模板 `entryFiles` 指向的条目文件不在部署产物里（详见 §3.7）。
+  补 `CHANGELOG.md` 后又因 `prefixes: {}` 报「未知前缀: DG」，必须再改配置；
+  最后还要补一份引用条目的功能文档，否则留下 4 条「孤儿条目」警告。
+  **一次全新接入 = 4 个手工决策点，全部卡在"第一条条目"上。**
 - **期望**：`graphgen_adopt {target}` = deploy + 扫 README/目录树生成 3–5 条种子条目 + generate。
 - **实现提示**：种子条目可以从 `README.md` 的二级标题自动切分（`DOC-001..00N`），
-  让 `graph.json` 立刻非空，后续再人工细化。
+  让 `graph.json` 立刻非空，后续再人工细化。同时按项目语言自动写入 `prefixes`
+  （C/驱动 → `DG`、前端 → `FE` 等），避免首条就撞「未知前缀」。
 
 ### P0-4 非 VCS 项目的降级模式
 
