@@ -30,7 +30,9 @@ node mcp/install.mjs --link
 3. 在全局 `~/.config/opencode/opencode.json` 写入 `mcp.graphgen`（先备份、原子写）；
 4. 起服务做 `initialize` / `tools/list` 自检；失败则不注册 opencode（运行时文件保留，便于排查）。
 
-> **重启 opencode** 后工具才可见。项目级注册：`--scope project --target <项目>`（写 `<项目>/opencode.json`）。
+> 安装/改配置后执行 `opencode reload`（或重启 opencode）让工具生效。**只重启 IDE 窗口不一定够**：
+> opencode 后台服务可能仍在复用旧连接；用 `opencode mcp list` 确认 `graphgen connected`。
+> 项目级注册：`--scope project --target <项目>`（写 `<项目>/opencode.json`）。
 
 ## 工具
 
@@ -44,6 +46,15 @@ node mcp/install.mjs --link
 
 > 工具在 opencode 中通常显示为 `graphgen_status` / `graphgen_deploy` …；若宿主用 `graphgen.status`
 > 形式，以实际工具列表为准。
+
+## 排错
+
+- `opencode mcp list` 显示 `graphgen failed: MCP server process exited with code 255`，且错误里只有启动横幅：
+  常见原因是旧的 MCP 子进程被手工结束后，后台服务缓存了失败连接。执行 `opencode reload`，再跑
+  `opencode mcp list`；仍失败时完全退出 opencode 后台服务后重开。
+- 不要按进程名批量杀 `node.exe`；需要重载时优先用 `opencode reload`，避免误伤其他会话或其他 MCP 服务。
+- 服务端自检：`node <install-dir>/mcp/install.mjs --doctor`。stdout 只输出 JSON-RPC；启动横幅和诊断信息走 stderr。
+- 改配置后若工具列表没变，同样是 `opencode reload`；只重启 IDE 窗口可能仍连着旧后台服务。
 
 缺引擎时，`query` / `repo` / `verify` 会先做**部署预检**，再决定是否自动部署（`autoDeploy: true` 时）：
 
