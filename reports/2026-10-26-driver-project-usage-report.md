@@ -218,7 +218,7 @@ ERROR: entry file not found: docs/CHANGELOG.md
 | `prefixes` | 未涉及 | 仍需人工配置，否则首条条目报「未知前缀」（20:0x 已修复，见 §3.9） |
 
 结论：P0-1（只读探测）、P0-2（`suggestedNextActions`）、P0-4（非 VCS 降级）的方向**已被采纳**；
-本次新增的 P0-3 证据（首次 `generate` 必败）是下一优先级。
+本次新增的 P0-3 证据（首次 `generate` 必败）已按 P0 最小闭环修复（见 §3.9）。
 
 ### 3.9 修复复测（P0 最小闭环）：首次部署自带种子条目
 
@@ -245,6 +245,11 @@ doclint: OK
 二次 `install.py` 输出 `skip .../docs/CHANGELOG.md（已存在合法条目）`，文件哈希不变；
 `node mcp/mcp-test.mjs` = **PASS=50 / FAIL=0**，覆盖空项目自动部署、种子落盘、已有 CHANGELOG 不覆盖、
 空条目文件返回 `needsDocs`、二次部署幂等。
+
+**既有项目回归（同步安装运行时后）**：对 `J:\ShiYan\CLion\temp`（已有 `DG-001..DG-004`）
+执行 `graphgen_deploy {confirm:true, vcs:"none"}`，日志为 `skip .../docs/CHANGELOG.md（已存在合法条目）`，
+`docs.ready=true / seeded=false`；随后 `check` = **7 nodes / 9 edges / 0 errors / 0 warnings**，
+`doclint: OK`。说明种子逻辑不会改动已有关联文档的项目。
 
 **边界与未做**：P0 只解决“从 0 到可生成”，没有实现完整 `adopt`——仍不会从 `README.md`
 自动切出 3–5 条业务种子，也不按项目语言自动检测前缀（默认 `DG`）。这两项保留到 `adopt` 阶段；
