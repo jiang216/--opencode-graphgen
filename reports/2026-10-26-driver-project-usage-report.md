@@ -123,7 +123,7 @@ skip  钩子（未加 --hooks）
 skip  AGENTS.md（已有安装标记）
 ```
 
-产生的仓库改动（**本次按用户要求保留，作为证据**）：
+产生的仓库改动（**当时按用户要求保留，作为证据**）：
 
 ```
  M .gitignore                     (+4 行)
@@ -133,6 +133,11 @@ skip  AGENTS.md（已有安装标记）
 ?? tools/graphgen.config.json
 ?? tools/repo.config.json
 ```
+
+> **20:0x 复查更正**：上述文件现已全部不存在，工作区干净（`git status` 无输出）。
+> 清理动作不是本次会话做的——同日插件侧有提交 `8819702 feat(mcp): 首次自动部署增加冲突预检与无 VCS 降级`、
+> `e98be77 fix(mcp): 安装完成后提示 opencode reload`，部署产物应是在这轮升级/回滚中一并移除的。
+> 因此下面的文件清单按「历史事实」保留，不再作为可复查的现场。
 
 ### 3.4 并发锁：一次读操作被部署锁挡住
 
@@ -402,7 +407,7 @@ graphgen_query { action: "check", root: "F:/shiyan/CLion/opencode-graphgen" }
 
 ---
 
-## 7. 附录 A：本次保留的部署产物（不删除，作为证据）
+## 7. 附录 A：本次曾产生的部署产物（留档；20:0x 复查时已被回滚）
 
 | 路径 | 说明 |
 |---|---|
@@ -415,7 +420,12 @@ graphgen_query { action: "check", root: "F:/shiyan/CLion/opencode-graphgen" }
 | `tools/repo.config.json` | 生成的配置（护栏默认只警告） |
 | `.gitignore` | +4 行，快照忽略项 |
 
-回滚命令（需要时）：
+> 截至 20:0x，以上文件均**已被移除**（工作区干净）。移除发生在同日插件升级（`8819702` / `e98be77`）过程中，
+> 不是本次会话主动回滚；本表仅作为"部署会产生什么"的留档。
+> 顺带说明：这也意味着**部署产物没有自愈/自清理的可见性**——文件消失时，用户/agent 只能靠 `git status` 发现，
+> 建议 `deploy` 在 `status` 里记录「上次部署时间 + 部署指纹」，便于判断"被谁清掉了"。
+
+历史回滚命令（已不需要执行，留作参考）：
 
 ```powershell
 cd F:\shiyan\CLion\opencode-graphgen
