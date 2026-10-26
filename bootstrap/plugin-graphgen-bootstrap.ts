@@ -73,10 +73,24 @@ export default Plugin.define({
         env: { ...process.env, PYTHONIOENCODING: "utf-8" },
         windowsHide: true,
       })
+      const output = (stdout || "") + (stderr ? `\n[stderr]\n${stderr}` : "")
       console.log(
-        `[graphgen-bootstrap] graphgen 全家桶已自动安装到 ${root}，请重启 opencode 使技能/插件生效（此后由 graphgen 技能管理）`,
-        (stdout || "") + (stderr ? `\n[stderr]\n${stderr}` : ""),
+        `[graphgen-bootstrap] graphgen 全家桶已自动安装到 ${root}，请重启 opencode 使技能生效（默认无文件监听；需要时用 install.py --plugin）`,
+        output,
       )
+      if (output.includes("未检测到可用的 VCS 工具")) {
+        console.warn(
+          "[graphgen-bootstrap] 本机没有 git/svn/hg：代码仓库管理已跳过。" +
+            "装好 git 后重跑 install.py 即可（Windows: winget install --id Git.Git -e）",
+        )
+      } else if (/git\s+git init\b|git\s+\[dry-run\] git init/.test(output)) {
+        console.log("[graphgen-bootstrap] 已为项目创建 git 仓库（git init），并生成部署快照与条目索引")
+      } else if (output.includes("位于") && output.includes("仓库") && output.includes("不建嵌套库")) {
+        console.warn(
+          "[graphgen-bootstrap] 项目位于父仓库内，未建嵌套库；确需独立历史请运行 " +
+            "python tools/repo.py init --allow-nested",
+        )
+      }
     } catch (err) {
       console.error(`[graphgen-bootstrap] graphgen 自动安装失败: ${String(err)}`)
     }

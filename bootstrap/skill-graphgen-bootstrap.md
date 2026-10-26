@@ -22,15 +22,21 @@ description: When the project contains an opencode-graphgen/ package folder (or 
 
    ```powershell
    $env:PYTHONIOENCODING='utf-8'
-   # 新包（全家桶：图谱 + 防漂移 doclint + 插件 + 技能 + 模板）
-   python <包>\install.py --target <项目根目录> [--hooks]
+   # 新包（全家桶：图谱 + 防漂移 doclint + 仓库管理 + 技能 + 模板；--plugin 才装监听插件）
+   python <包>\install.py --target <项目根目录> [--hooks] [--plugin]
    # legacy dist 包（仅图谱）
    python <包>\graphgen.py --init <项目根目录> [--name 项目名]
    ```
 
-   `install.py` 幂等（重复执行=同步更新）：拷贝引擎/doclint/插件/技能，缺省时生成
-   `tools/graphgen.config.json`、`tools/doclint.config.json`，补 `.opencode/package.json` 依赖，
-   `--hooks` 附 pre-commit 硬闸，无 `--no-agents` 时创建/追加 `AGENTS.md` 工作流片段（marker 防重复）。
+   `install.py` 幂等（重复执行=同步更新）：拷贝引擎/doclint/技能/仓库适配层，缺省时生成
+   `tools/graphgen.config.json`、`tools/doclint.config.json`、`tools/repo.config.json`；
+   `--plugin` 才装监听插件并补 `.opencode/package.json` 依赖；
+   `--hooks` 附 pre-commit/commit-msg 硬闸，无 `--no-agents` 时创建/追加 `AGENTS.md` 工作流片段（marker 防重复）。
+
+   **代码仓库管理（install.py 自动做，无需额外命令）**：检测 `.git/.hg/.svn`；没有仓库且本机有 git → 自动
+   `git init -b main` + 播种 `.gitignore` + 生成部署快照与条目索引；在父仓库内不建嵌套库；svn 需
+   `--vcs-remote <URL>`；本机没有任何 VCS 工具时只打印安装指引（`winget install --id Git.Git -e`）并继续。
+   如需关闭自动建库：`--no-vcs-init`；整步跳过：`--vcs none`。
 5. **首次配置**：编辑 `tools/graphgen.config.json`（`prefixes` 必须填条目前缀表）与 `tools/doclint.config.json`（按项目开关 R2-R5、配 `requireHistory`）。
 6. **验证**：
    ```powershell
@@ -38,10 +44,14 @@ description: When the project contains an opencode-graphgen/ package folder (or 
    python tools\graphgen.py           # 生成 docs/graph.json / GRAPH.md / graph.mmd
    python tools\doclint.py            # 期望 doclint: OK
    ```
-7. **提示重启**：安装后 opencode 需**重启**才能加载新的 graphgen 技能/插件。重启后即可用 `graphgen_query`（含 `action=doclint`）工具与自动重生成。
+7. **提示重启**：安装后 opencode 需**重启**才能加载新的 graphgen 技能。重启后即可用 `graphgen_query`（含 `action=doclint`）；默认无文件监听，改完文档要显式 `action=generate`（需要保存即重生成再加 `--plugin`）。
 
 ## 注意事项
 
 - 若安装因 python 不在 PATH 失败：提示用户装 Python 或用完整路径；也可退化为「方式 B 手动拷贝」（见 INSTALL.md）。
+- 若安装输出 `未检测到可用的 VCS 工具`：告诉用户代码仓库管理已跳过，装好 git 后重跑 `install.py` 即可；
+  不要因为缺 VCS 中断安装（图谱/防漂移不依赖它）。
+- 若安装输出 `位于 … 仓库 … 内，不建嵌套库`：这是防误建嵌套库的正常行为，除非用户明确要独立历史，
+  否则不要加 `--allow-nested`。
 - 包文件夹本身是**分发物**，安装后可留作参考或删除（工具已拷到 `tools/` 与 `.opencode/`）。
 - 安装完成后，日常使用/查反链参考已安装的 `graphgen` 技能（`.opencode/skills/graphgen/SKILL.md`）。

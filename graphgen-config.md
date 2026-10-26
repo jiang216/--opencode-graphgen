@@ -11,6 +11,7 @@
 |------|------|
 | `graphgen.py` | 引擎（纯 stdlib，无第三方依赖） |
 | `graphgen.config.template.json` | 配置模板（`{{NAME}}` 占位） |
+| `repo.py` / `repo.config.template.json` | 代码仓库适配层（git/hg/svn）与配置模板 |
 | `INSTALL.md` | **安装文档**（一键 `--init` / 手动拷贝 / 全局自安装 / 验证 / 卸载） |
 | `skill-graphgen.md` | opencode 技能（可选增强） |
 | `plugin-graphgen-watch.ts` | 插件：文件事件自动重生成 + `graphgen_query` 工具（可选增强） |
@@ -66,6 +67,7 @@ python <包目录>\graphgen.py --init <目标目录> [--name 项目名]
 | `checklistHeadings` | checklist 边所在章节（子串匹配） | `["必须保证的功能","回归清单"]` |
 | `checklistSourceColumn` | 回归清单「来源」列表头 | `"来源"` |
 | `tableEdges` | 自定义表格→边 | `[]` |
+| `repo` | 代码仓库关联：`enabled`、`linksFile`（默认 `docs/repo-links.json`）、`snapshotMarkdown`（默认 `docs/REPO.md`，自动免扫描）、`maxCommitNodes` | 见模板 |
 | `output` | graph.json / GRAPH.md / graph.mmd 路径 | 见模板 |
 
 ### tableEdges 示例
@@ -85,18 +87,66 @@ python <包目录>\graphgen.py --init <目标目录> [--name 项目名]
 }
 ```
 
-## opencode 增强（可选）
+## MCP 服务端（v0.3 推荐）
 
-`--init` 已自动接入。若手动拷贝，只需把 `skill-graphgen.md`、`plugin-graphgen-watch.ts` 放入
+```powershell
+node mcp\install.mjs --install-dir D:\tools\graphgen-mcp
+node mcp\install.mjs --install-dir D:\tools\graphgen-mcp --doctor
+```
+
+- 全局注册 `mcp.graphgen`；**一份运行时**服务所有项目，新项目首次调用自动补引擎。
+- 工具：`status` / `deploy` / `query` / `repo` / `verify`（详见 `mcp/README.md`）。
+- 初始化 `initialize.instructions` 每轮注入：新项目先 `status`、缺引擎直接 `deploy`、
+  改完文档 `generate` + `verify`、改完自己提交（不 push）。
+
+`mcp/config.json` 关键字段：
+
+| 字段 | 默认 | 含义 |
+|------|------|------|
+| `engineRoot` | `../engine` | 引擎目录（相对 config.json） |
+| `python` | `auto` | `python` / `py -3` / 绝对路径 |
+| `autoDeploy` | `true` | 缺引擎时自动部署（`false` 只报告） |
+| `sourceRoot` | 安装时写入 | MCP 源仓库；自动部署跳过它 |
+| `deploy.vcs` / `vcsInit` | `auto` / `true` | 无仓库自动建库 |
+| `deploy.vcsCommit` | `false` | 建库后不自动提交 |
+| `deploy.hooks` / `plugin` | `false` | 默认不装钩子、不装监听插件 |
+| `deploy.snapshot` / `agents` | `true` | 生成快照 / 追加 AGENTS 片段 |
+
+## opencode 插件（可选，`--plugin`）
+
+v0.3 默认不装插件；需要“保存即重生成”时用 `install.py --plugin`（或 `deploy` 的 `plugin: true`）。
+手动拷贝时把 `skills/graphgen/SKILL.md`、`src/index.ts` 放入
 `<目标>/.opencode/skills/graphgen/SKILL.md`、`<目标>/.opencode/plugins/graphgen-watch.ts`。
 插件为 **opencode V2 插件 API**（`Plugin.define`，需 opencode ≥ 2.0）。运行时 `@opencode/plugin` 由
-opencode 自行解析，`<目标>/.opencode/package.json` 的 `@opencode/plugin` 依赖声明仅供编辑器
-类型检查（V2 不会自动 `bun install`）。插件行为：
+opencode 自行解析，`<目标>/.opencode/package.json` 的依赖声明仅供编辑器类型检查。
+插件行为：
 
 - 监听 `filesystem.changed`（兼容 `file.edited`），白名单：`docs/**`（排除 `docs/graph.*` 防自触发）、
   `AGENTS.md`、`.opencode/skills/*/SKILL.md`、`tools/graphgen.config.json`，1.5s 去抖后自动重生成。
 - 注册 `graphgen_query` 工具（action=query / generate / check / doclint）。
-- compaction 摘要请求注入“graphgen_query 保持可用”提示，卸载时中止事件流并清理定时器。
+- 注册 `repo_query` 工具（action=status / init / snapshot / links / guard）。
+- `session.hook("context")` 每轮注入常驻记忆「改完自己提交」（`GRAPHGEN_AUTO_COMMIT=0` 关闭）；
+  记忆要求只提交本次改动文件、不 push、不 amend。compaction 摘要也会保留该约定提示。
+- compaction 摘要请求注入“graphgen_query / repo_query 保持可用”提示，卸载时中止事件流并清理定时器。
+
+## 代码仓库管理（repo.py）
+
+与 graphgen/doclint 平级的第三个引擎，配置 `tools/repo.config.json`（模板 `tools/repo.config.template.json`）。
+
+| 子命令 | 作用 | 产物 |
+|--------|------|------|
+| `detect` | 识别 `.git/.hg/.svn`、仓库根、是否只是父仓库子目录 | — |
+| `status` | 分支/HEAD/远端/工作区/上游 ahead-behind | — |
+| `init` | 建库（git 优先；svn 需 `--remote`；`--dry-run` 预览） | `.git` / `.hg` |
+| `snapshot` | 部署侧快照（含主机/用户/平台/目录） | `docs/repo.json`、`docs/REPO.md` |
+| `links` | 扫提交，抽条目 ID（正则来自 graphgen `prefixes`） | `docs/repo-links.json` |
+| `guard` | `--stage commit\|commit-msg\|push`，只读检查 | — |
+
+- 图谱集成：`repo.enabled` 时读 `linksFile`，生成 `COMMIT:<短哈希>` 节点与 `touches` 边（条目→提交）；
+  索引里已删除的条目**静默跳过**，避免历史索引把 `--check` 变成红灯。
+- `docs/REPO.md` 是 AUTO-GENERATED，已自动加入 `scan.ignore` 与 `.gitignore`（本地部署记录）；doclint **R8**\n  在发布/CI 校验其 HEAD 与当前一致（提交钩子用 `DOCLINT_SKIP_R8=1` 跳过）。
+- 护栏默认只警告（`entryIdMode`/`changelogMode` = `warn`），改 `error` 才阻断提交；护栏不执行
+  `add/commit/push`。
 
 ## 约定（引擎默认支持的文档规范）
 

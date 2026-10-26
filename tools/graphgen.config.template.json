@@ -24,6 +24,13 @@
   "_comment_refEntryFiles": "ref 边指向的条目文件（相关历史条目链接的目标）",
   "tableEdges": [],
   "_comment_tableEdges": "可选：表格→边。示例：AGENTS 源码→文档映射（srcCol/docCol, owns）、README 索引表（linkCol, index）",
+  "repo": {
+    "enabled": false,
+    "linksFile": "docs/repo-links.json",
+    "snapshotMarkdown": "docs/REPO.md",
+    "maxCommitNodes": 300,
+    "_comment": "代码仓库：enabled 后读 tools/repo.py links 的索引，生成 COMMIT 节点与 touches 边；snapshotMarkdown 自动免扫描"
+  },
   "output": {
     "json": "docs/graph.json",
     "markdown": "docs/GRAPH.md",

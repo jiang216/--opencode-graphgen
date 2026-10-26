@@ -1,9 +1,14 @@
 #!/bin/sh
-# pre-commit 硬闸：文档漂移校验 + 图谱 lint
+# pre-commit 硬闸：文档漂移校验 + 图谱 lint + 代码仓库护栏
 # 启用方式（本仓库 local 配置，不推远程）：git config core.hooksPath tools/git-hooks
 # 绕过（不建议）：git commit --no-verify
 set -e
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
-PYTHONIOENCODING=utf-8 python tools/doclint.py
+# R8（部署快照新鲜度）只在发布/CI 检查：提交后快照必然落后于 HEAD，钩子里跳过
+DOCLINT_SKIP_R8=1 PYTHONIOENCODING=utf-8 python tools/doclint.py
 PYTHONIOENCODING=utf-8 python tools/graphgen.py --check
+# 代码仓库护栏（repo.py 未安装时自动跳过；默认只警告，config 改 error 才阻断）
+if [ -f tools/repo.py ]; then
+  PYTHONIOENCODING=utf-8 python tools/repo.py guard --stage commit
+fi

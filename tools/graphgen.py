@@ -321,6 +321,10 @@ class GraphBuilder:
     def _scan(self) -> None:
         cfg = self.cfg
         ignore: set[str] = {to_posix(p) for p in cfg.get("scan", {}).get("ignore", [])}
+        # 部署快照是 AUTO-GENERATED 产物，绝不当作功能文档参与节点/孤儿统计
+        repo_cfg = cfg.get("repo") or {}
+        if repo_cfg.get("snapshotMarkdown"):
+            ignore.add(to_posix(repo_cfg["snapshotMarkdown"]))
         ignore_prefixes = [to_posix(p) for p in cfg.get("scan", {}).get("ignorePrefixes", [])]
         roots = cfg.get("scan", {}).get("roots", ["docs"])
         ref_markers = cfg.get("refSections", ["相关历史条目"])
@@ -394,6 +398,7 @@ class GraphBuilder:
         self._links_to_edges()
         self._tables_to_edges()
         self._backticks_to_edges()
+        self._repo_edges()
 
     # -- link edges ------------------------------------------------------
     def _links_to_edges(self) -> None:
@@ -568,6 +573,56 @@ class GraphBuilder:
                 if not rel.endswith(".md"):
                     continue
                 self.edge(src, nid, "mention", context="")
+
+    # -- repo commit edges ----------------------------------------------
+    def _repo_edges(self) -> None:
+        """条目 ↔ 提交：把 tools/repo.py links 的索引接进图谱。
+
+        边方向：条目 → 提交（kind=touches），于是 `graphgen_query node=DG-009`
+        能直接列出「这条需求改过哪些提交」，提交侧则拿到反链。
+        索引里引用已删除/改名的条目时**静默跳过**：历史索引不应把
+        `--check` 变成红灯（否则删条目必然破 CI）。
+        """
+        repo_cfg = self.cfg.get("repo") or {}
+        if not repo_cfg.get("enabled"):
+            return
+        rel = to_posix(repo_cfg.get("linksFile", "docs/repo-links.json"))
+        path = self.root / rel
+        if not path.is_file():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            self.warnings.append(f"提交索引无法解析: {rel}（重跑 python tools/repo.py links）")
+            return
+        by_entry = data.get("byEntry") or {}
+        limit = int(repo_cfg.get("maxCommitNodes", 300))
+        added = 0
+        for eid in sorted(by_entry):
+            entry_nid = self._entry_node_id(str(eid))
+            if entry_nid is None:
+                continue
+            for item in by_entry[eid] or []:
+                short = str(item.get("short") or "").strip()
+                if not short:
+                    continue
+                if added >= limit:
+                    self.warnings.append(f"提交节点超过 maxCommitNodes={limit}，其余已省略")
+                    return
+                cid = f"COMMIT:{short}"
+                if cid not in self.nodes:
+                    subject = str(item.get("subject") or "").strip()
+                    self.add_node(cid, "COMMIT", subject[:80] or short, f"commit:{short}")
+                    added += 1
+                self.edge(entry_nid, cid, "touches", context=str(item.get("date") or ""))
+
+    def _entry_node_id(self, eid: str) -> str | None:
+        """按条目 ID 找已注册节点（条目类型由配置决定，如 BUG/FEAT）。"""
+        suffix = ":" + eid
+        for nid, node in self.nodes.items():
+            if nid.endswith(suffix) and node.get("type") not in ("DOC", "SKILL", "META", "SRC", "COMMIT"):
+                return nid
+        return None
 
     # -- lint ------------------------------------------------------------
     def _lint(self) -> None:

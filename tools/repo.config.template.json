@@ -1,0 +1,43 @@
+{
+  "_comment": "repo.py 配置模板（安装时复制为 tools/repo.config.json，缺省才生成）。字段与 tools/repo.py 的 DEFAULTS 保持一致；改这里等于改默认值。",
+  "vcs": {
+    "priority": ["git", "hg", "svn"],
+    "allowNested": false,
+    "initBranch": "main",
+    "remote": "",
+    "commit": false,
+    "strict": false,
+    "commitMessage": "chore: 初始化仓库（opencode-graphgen）",
+    "_": "priority=自动建库时的工具优先级；allowNested=允许在父仓库里建嵌套库；commit=建库后是否首次提交（默认关，本机常无 git 身份）；strict=缺工具时 install.py 退出码非 0"
+  },
+  "snapshot": {
+    "json": "docs/repo.json",
+    "markdown": "docs/REPO.md",
+    "_": "部署侧快照产物；markdown 会自动加入 graphgen scan.ignore，避免被当功能文档"
+  },
+  "links": {
+    "out": "docs/repo-links.json",
+    "maxCommits": 300,
+    "idPattern": "",
+    "_": "条目↔提交索引；idPattern 留空时自动读 tools/graphgen.config.json 的 prefixes 生成正则（更准）"
+  },
+  "guard": {
+    "requireEntryId": false,
+    "entryIdMode": "warn",
+    "requireChangelogUpdate": true,
+    "changelogMode": "warn",
+    "docsPrefixes": ["docs/"],
+    "docsFiles": ["AGENTS.md", "README.md"],
+    "ignore": [
+      "docs/graph.json",
+      "docs/GRAPH.md",
+      "docs/graph.mmd",
+      "docs/repo.json",
+      "docs/REPO.md",
+      "docs/repo-links.json"
+    ],
+    "changelog": "docs/CHANGELOG.md",
+    "maxFileMB": 50,
+    "_": "护栏默认只警告不阻断；entryIdMode/changelogMode 改成 error 才拦提交"
+  }
+}

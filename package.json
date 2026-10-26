@@ -1,13 +1,14 @@
 {
   "name": "opencode-graphgen",
-  "version": "0.1.0",
-  "description": "opencode 文档图谱（graphgen）+ 文档防漂移（doclint）全家桶：自动重生成插件、graphgen_query/doclint 工具、技能、引擎、统一安装器",
+  "version": "0.3.0",
+  "description": "opencode 文档图谱（graphgen）+ 文档防漂移（doclint）+ 代码仓库管理（repo）全家桶：MCP 服务端（自动部署/查询/校验/仓库）、可选文件监听插件、技能、引擎、统一安装器",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "mcp/server.mjs",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./mcp/server.mjs"
   },
   "files": [
+    "mcp/",
     "src/",
     "skills/",
     "bootstrap/",
@@ -20,7 +21,11 @@
     "@opencode/plugin": "2.0.32"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --strict --skipLibCheck --module preserve --moduleResolution bundler --target es2022 src/index.ts bootstrap/plugin-graphgen-bootstrap.ts"
+    "typecheck": "tsc --noEmit --strict --skipLibCheck --module preserve --moduleResolution bundler --target es2022 src/index.ts bootstrap/plugin-graphgen-bootstrap.ts",
+    "mcp": "node mcp/server.mjs",
+    "mcp:test": "node mcp/mcp-test.mjs",
+    "mcp:install": "node mcp/install.mjs",
+    "mcp:doctor": "node mcp/install.mjs --doctor"
   },
   "license": "UNLICENSED",
   "private": true,

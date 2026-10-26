@@ -1,0 +1,6 @@
+#!/bin/sh
+# commit-msg 护栏：提交信息建议/强制带已登记条目 ID（DG-009、AG-733…）
+# 是否阻断由 tools/repo.config.json 的 guard.requireEntryId / entryIdMode 决定（默认只警告）。
+# 绕过（不建议）：git commit --no-verify
+[ -f tools/repo.py ] || exit 0
+PYTHONIOENCODING=utf-8 python tools/repo.py guard --stage commit-msg --message-file "$1"

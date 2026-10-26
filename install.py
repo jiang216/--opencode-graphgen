@@ -2,7 +2,7 @@
 """opencode-graphgen 统一安装器 — 把全家桶幂等装进目标项目。
 
 用法:
-  python install.py --target F:\\path\\to\\project [--hooks]
+  python install.py --target F:\\path\\to\\project [--hooks] [--vcs auto|git|hg|svn|none]
 
 做什么（重复执行安全，已存在即覆盖=同步更新）:
   1. tools/graphgen.py、tools/graphgen.config.template.json  → <target>/tools/
@@ -11,21 +11,33 @@
   3. skills/graphgen/                                        → <target>/.opencode/skills/graphgen/
   4. tools/doclint.py、tools/gen_doc_slice.py                → <target>/tools/
   5. tools/doclint.config.json 不存在时由 templates/doclint.config.example.json 生成
-  6. <target>/.opencode/package.json 保证依赖 @opencode/plugin（V2，缺则建/补；
+  6. tools/repo.py（代码仓库适配层）+ tools/repo.config.template.json → <target>/tools/
+     <target>/tools/repo.config.json 不存在时由模板生成
+  7. 代码仓库管理（--vcs none 可整步跳过）:
+     a. 检测 .git/.hg/.svn；已是仓库 → 只体检（分支/HEAD/工作区），绝不重建
+     b. 无仓库 + 有 git/hg/svn → 默认自动建库（git init -b main + 播种 .gitignore）
+        svn 需 --vcs-remote <URL>，不在本地凭空造库
+     c. 无任何 VCS 工具 → 打印安装指引，不失败（--vcs-strict 时退出码 1）
+     d. 建库/检出成功 → 生成 docs/repo.json + docs/REPO.md 部署快照、
+        docs/repo-links.json 条目↔提交索引，并打开 doclint R8 / graphgen repo 块
+  8. <target>/.opencode/package.json 保证依赖 @opencode/plugin（V2，缺则建/补；
      同时移除 V1 残留依赖 @opencode-ai/plugin）
-  7. --hooks: templates/pre-commit → <target>/tools/git-hooks/pre-commit
-              且 target 是 git 仓库时设 core.hooksPath=tools/git-hooks
-  8. AGENTS.md 追加模板片段（已有 <!-- graphgen:installed --> 标记则跳过）
+  9. --hooks: templates/pre-commit + templates/commit-msg → <target>/tools/git-hooks/
+               且 target 自身是仓库根时设 core.hooksPath=tools/git-hooks
+               （在父仓库内只装文件，不改父仓库配置）
+ 10. AGENTS.md 追加模板片段（已有 <!-- graphgen:installed --> 标记则跳过）
 
-退出码：0=成功 1=失败
+退出码：0=成功 1=失败（--vcs-strict 且缺 VCS 工具时也算失败）
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -33,7 +45,34 @@ HERE = Path(__file__).resolve().parent
 PLUGIN_DEP = {"@opencode/plugin": "2.0.32"}
 PLUGIN_STALE_DEPS = ("@opencode-ai/plugin",)
 MARKER = "<!-- graphgen:installed -->"
+SNAPSHOT_JSON = "docs/repo.json"
+SNAPSHOT_MD = "docs/REPO.md"
+LINKS_JSON = "docs/repo-links.json"
+PLUGIN_REL = ".opencode/plugins/graphgen-watch.ts"
 
+
+@dataclass
+class InstallOptions:
+    """install_project() 的全部开关；CLI / MCP 共用。"""
+
+    target: Path
+    hooks: bool = False
+    agents: bool = True
+    vcs: str = "auto"
+    vcs_init: bool = True
+    vcs_remote: str = ""
+    vcs_branch: str = ""
+    vcs_commit: bool = False
+    vcs_strict: bool = False
+    snapshot: bool = True
+    dry_run: bool = False
+    plugin: bool = False
+    remove_plugin: bool = False
+
+
+# ---------------------------------------------------------------------------
+# 文件与配置
+# ---------------------------------------------------------------------------
 
 def copy_file(src: Path, dst: Path) -> str:
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -63,8 +102,19 @@ def ensure_doclint_config(target: Path) -> str:
     return f"new   {cfg}（示例配置，按项目裁剪规则开关/配参）"
 
 
+def ensure_repo_config(target: Path) -> str:
+    cfg = target / "tools" / "repo.config.json"
+    if cfg.is_file():
+        return f"skip  {cfg}（已存在）"
+    src = HERE / "tools" / "repo.config.template.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, cfg)
+    return f"new   {cfg}（缺省配置；护栏默认只警告）"
+
+
 def ensure_package_json(target: Path) -> str:
     pkg = target / ".opencode" / "package.json"
+    existed = pkg.is_file()
     changed = False
     if pkg.is_file():
         try:
@@ -89,29 +139,258 @@ def ensure_package_json(target: Path) -> str:
     if changed:
         pkg.parent.mkdir(parents=True, exist_ok=True)
         pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return f"{'new ' if not pkg.is_file() else 'upd '} {pkg}"
+        return f"{'upd ' if existed else 'new '} {pkg}"
     return f"skip  {pkg}（依赖已在）"
+
+
+# ---------------------------------------------------------------------------
+# 代码仓库管理（repo.py 驱动）
+# ---------------------------------------------------------------------------
+
+def run_repo(target: Path, *args: str) -> tuple[int, dict | None]:
+    """调用目标项目内的 tools/repo.py（保证与部署版本一致），返回 (rc, json)。"""
+    script = target / "tools" / "repo.py"
+    if not script.is_file():
+        return 1, None
+    cmd = [sys.executable, str(script), *args, "--root", str(target), "--json"]
+    kwargs: dict = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=300, **kwargs,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, {"messages": [f"warn  repo.py 执行失败：{e}"]}
+    text = (r.stdout or "").strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        detail = (text or (r.stderr or "")).strip().replace("\n", " ")[:300]
+        return r.returncode, {"messages": [f"warn  repo.py 输出无法解析：{detail}"]}
+    if isinstance(data, dict):
+        data.setdefault("_rc", r.returncode)
+    return r.returncode, data
+
+
+def _dirty_text(dirty: dict) -> str:
+    if not dirty or not dirty.get("total"):
+        return "工作区干净"
+    return (f"{dirty['total']} 处改动（暂存 {dirty.get('staged', 0)} / "
+            f"未暂存 {dirty.get('modified', 0)} / 未跟踪 {dirty.get('untracked', 0)}）")
+
+
+def enable_repo_integrations(target: Path) -> list[str]:
+    """打开 doclint R8 与 graphgen repo 块（缺省才写，尊重用户已有开关）。"""
+    out: list[str] = []
+
+    dl = target / "tools" / "doclint.config.json"
+    if dl.is_file():
+        try:
+            cfg = json.loads(dl.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError:
+            cfg = None
+        if isinstance(cfg, dict):
+            rules = cfg.setdefault("rules", {})
+            r8 = rules.get("R8")
+            changed = False
+            if not isinstance(r8, dict):
+                rules["R8"] = {
+                    "enable": True,
+                    "snapshot": SNAPSHOT_MD,
+                    "json": SNAPSHOT_JSON,
+                    "_": "部署快照新鲜度：docs/REPO.md 记录的 HEAD 必须等于当前 HEAD",
+                }
+                changed = True
+            else:
+                for k, v in (("snapshot", SNAPSHOT_MD), ("json", SNAPSHOT_JSON)):
+                    if k not in r8:
+                        r8[k] = v
+                        changed = True
+            if changed:
+                dl.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                out.append(f"upd   {dl}（启用 R8 部署快照校验）")
+            else:
+                out.append(f"skip  {dl}（R8 已在）")
+
+    gg = target / "tools" / "graphgen.config.json"
+    if gg.is_file():
+        try:
+            cfg = json.loads(gg.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError:
+            cfg = None
+        if isinstance(cfg, dict):
+            changed = False
+            repo = cfg.get("repo")
+            if not isinstance(repo, dict):
+                cfg["repo"] = {
+                    "enabled": True,
+                    "linksFile": LINKS_JSON,
+                    "snapshotMarkdown": SNAPSHOT_MD,
+                    "maxCommitNodes": 300,
+                    "_comment": "提交↔条目关联：由 tools/repo.py links 生成，graphgen 增加 COMMIT 节点与 touches 边；"
+                                "不想用时置 keepDisabled=true",
+                }
+                changed = True
+            else:
+                # 安装器已确认仓库存在：默认打开（用户显式 keepDisabled 时尊重）
+                if repo.get("enabled") is not True and not repo.get("keepDisabled"):
+                    repo["enabled"] = True
+                    changed = True
+                for k, v in (("linksFile", LINKS_JSON), ("snapshotMarkdown", SNAPSHOT_MD), ("maxCommitNodes", 300)):
+                    if k not in repo:
+                        repo[k] = v
+                        changed = True
+            ignore = cfg.setdefault("scan", {}).setdefault("ignore", [])
+            for p in (SNAPSHOT_MD, SNAPSHOT_JSON, LINKS_JSON):
+                if p not in ignore and p.endswith(".md"):
+                    ignore.append(p)
+                    changed = True
+            if changed:
+                gg.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                out.append(f"upd   {gg}（启用 repo 块 + 快照产物免扫描）")
+            else:
+                out.append(f"skip  {gg}（repo 块已在）")
+    return out
+
+
+def ensure_vcs(target: Path, opts: InstallOptions) -> tuple[list[str], int]:
+    out: list[str] = []
+    if opts.vcs == "none":
+        return ["skip  代码仓库管理（--vcs none）"], 0
+
+    rc, info = run_repo(target, "detect")
+    if info is None:
+        return [f"warn  {target}/tools/repo.py 缺失，跳过代码仓库管理"], 0
+
+    vcs = info.get("vcs") or ""
+    if vcs:
+        out.append(f"repo  {vcs} 仓库已存在（{target}）")
+        rc, st = run_repo(target, "status")
+        if st and st.get("result") == "ok":
+            out.append(
+                f"{vcs}   {st.get('branch') or '(no branch)'} @ "
+                f"{st.get('headShort') or '(空仓库)'} · {_dirty_text(st.get('dirty', {}))}"
+            )
+            remotes = st.get("remotes") or []
+            if remotes:
+                out.append("      remote: " + "、".join(f"{r['name']}={r['url']}" for r in remotes))
+        elif st:
+            out.extend(st.get("messages") or [])
+        if info.get("conflict"):
+            out.append(
+                f"warn  同时存在 {', '.join(info['conflict'])} 标记，按优先级使用 {vcs}"
+                "（旧 VCS 目录未删除，确认后可手动清理）"
+            )
+    elif info.get("nested"):
+        where = info.get("parentRoot")
+        out.append(f"warn  目标位于 {info.get('parentVcs')} 仓库 {where} 内，不建嵌套库")
+        out.append("       确需独立历史：python tools/repo.py init --allow-nested")
+        return out, 0
+    else:
+        if not opts.vcs_init:
+            out.append("skip  未检测到代码仓库（--no-vcs-init，不自动建库）")
+            return out, 0
+        init_args = ["init", "--vcs", opts.vcs]
+        if opts.vcs_remote:
+            init_args += ["--remote", opts.vcs_remote]
+        if opts.vcs_branch:
+            init_args += ["--branch", opts.vcs_branch]
+        if opts.vcs_commit:
+            init_args.append("--commit")
+        if opts.dry_run:
+            init_args.append("--dry-run")
+        rc, res = run_repo(target, *init_args)
+        res = res or {}
+        out.extend(res.get("messages") or [f"warn  repo.py init 未返回结果（exit {rc}）"])
+        if res.get("result") in ("no-tool", "needs-remote", "failed", "nested", "skip"):
+            # 没有可用的仓库：不生成快照/索引，让用户先补齐工具或远端
+            if opts.vcs_strict and res.get("result") == "no-tool":
+                out.append("warn  --vcs-strict：缺少可用 VCS 工具，按失败处理（退出码 1）")
+                return out, 1
+            return out, 0
+        if res.get("result") == "planned":
+            return out, 0
+
+    # 到这里一定已有仓库（原有或刚建）
+    if opts.snapshot:
+        rc, snap = run_repo(target, "snapshot")
+        snap = snap or {}
+        if snap.get("messages"):
+            out.extend(snap["messages"])
+        elif rc != 0:
+            out.append(f"warn  部署快照生成失败（exit {rc}）")
+
+    rc, links = run_repo(target, "links")
+    links = links or {}
+    if links.get("result") == "ok":
+        out.extend(links.get("messages") or [])
+    else:
+        out.extend(links.get("messages") or [f"warn  条目↔提交索引未生成（exit {rc}）"])
+
+    out.extend(enable_repo_integrations(target))
+    return out, 0
+
+
+# ---------------------------------------------------------------------------
+# hooks / AGENTS
+# ---------------------------------------------------------------------------
+
+def _git_toplevel(target: Path) -> Path | None:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(target), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    try:
+        return Path(r.stdout.strip()).resolve()
+    except OSError:
+        return None
 
 
 def install_hooks(target: Path) -> list[str]:
     out: list[str] = []
-    hook_dst = target / "tools" / "git-hooks" / "pre-commit"
-    out.append(copy_file(HERE / "templates" / "pre-commit", hook_dst))
+    hook_dir = target / "tools" / "git-hooks"
+    out.append(copy_file(HERE / "templates" / "pre-commit", hook_dir / "pre-commit"))
+    out.append(copy_file(HERE / "templates" / "commit-msg", hook_dir / "commit-msg"))
+
+    top = _git_toplevel(target)
+    if top is None:
+        out.append(f"skip  {target} 不是 git 仓库，只装钩子文件")
+        return out
+    if top != target:
+        out.append(f"warn  {target} 位于 git 仓库 {top} 内，只装钩子文件（不改父仓库 core.hooksPath）")
+        return out
     try:
-        r = subprocess.run(
-            ["git", "-C", str(target), "rev-parse", "--is-inside-work-tree"],
-            capture_output=True, text=True, timeout=30,
+        subprocess.run(
+            ["git", "-C", str(target), "config", "core.hooksPath", "tools/git-hooks"],
+            check=True, capture_output=True, timeout=30,
         )
-        if r.returncode == 0 and r.stdout.strip() == "true":
-            subprocess.run(
-                ["git", "-C", str(target), "config", "core.hooksPath", "tools/git-hooks"],
-                check=True, capture_output=True, timeout=30,
-            )
-            out.append(f"git   core.hooksPath=tools/git-hooks ({target})")
-        else:
-            out.append(f"skip  {target} 非 git 仓库，只装钩子文件")
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        out.append(f"warn  git 不可用：{e}")
+        out.append(f"git   core.hooksPath=tools/git-hooks ({target})")
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+        out.append(f"warn  设置 core.hooksPath 失败：{e}")
+    return out
+
+
+def remove_plugin(target: Path) -> list[str]:
+    plugin = target / PLUGIN_REL
+    if not plugin.is_file():
+        return [f"skip  {plugin}（未安装）"]
+    try:
+        plugin.unlink()
+    except OSError as e:
+        return [f"warn  删除插件失败：{e}"]
+    out = [f"del   {plugin}（--remove-plugin）"]
+    try:
+        plugin.parent.rmdir()  # 只在目录为空时成功
+        out.append(f"del   {plugin.parent}/（已空）")
+    except OSError:
+        pass
     return out
 
 
@@ -124,24 +403,42 @@ def append_agents_snippet(target: Path) -> str:
             return f"skip  {agents}（已有安装标记）"
         sep = "" if text.endswith("\n") else "\n"
         agents.write_text(text + sep + "\n" + snippet, encoding="utf-8")
-        return f"upd   {agents}（追加图谱/防漂移工作流片段）"
+        return f"upd   {agents}（追加图谱/防漂移/仓库管理工作流片段）"
     agents.write_text(snippet, encoding="utf-8")
     return f"new   {agents}"
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="opencode-graphgen 安装器")
-    ap.add_argument("--target", required=True, help="目标项目根目录")
-    ap.add_argument("--hooks", action="store_true", help="安装 pre-commit 钩子并启用 core.hooksPath")
-    ap.add_argument("--no-agents", action="store_true", help="不创建/不追加目标 AGENTS.md（目标已有自己的工作流时用）")
-    args = ap.parse_args()
+# ---------------------------------------------------------------------------
+# 安装（可调用入口，供 CLI 与 MCP 共用）
+# ---------------------------------------------------------------------------
 
-    target = Path(args.target).resolve()
+def _summarize(logs: list[str]) -> dict:
+    counts: dict[str, int] = {}
+    for line in logs:
+        key = line.strip().split(None, 1)[0] if line.strip() else ""
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    counts["total"] = len(logs)
+    return counts
+
+
+def install_project(target: Path, opts: InstallOptions | None = None) -> dict:
+    """把全家桶幂等安装进 target，返回机器可读报告（不打印）。"""
+    target = Path(target).resolve()
+    opts = opts or InstallOptions(target=target)
+    opts.target = target
+
     if not target.is_dir():
-        print(f"install: 目标不存在 {target}")
-        return 1
+        return {
+            "ok": False,
+            "target": str(target),
+            "logs": [f"install: 目标不存在 {target}"],
+            "summary": {},
+            "options": _options_dict(opts),
+        }
 
     logs: list[str] = []
+    failed = False
     try:
         logs.append(copy_file(HERE / "tools" / "graphgen.py", target / "tools" / "graphgen.py"))
         logs.append(copy_file(
@@ -149,7 +446,13 @@ def main() -> int:
             target / "tools" / "graphgen.config.template.json",
         ))
         logs.append(ensure_graphgen_config(target))
-        logs.append(copy_file(HERE / "src" / "index.ts", target / ".opencode" / "plugins" / "graphgen-watch.ts"))
+        if opts.remove_plugin:
+            logs.extend(remove_plugin(target))
+        if opts.plugin:
+            logs.append(copy_file(HERE / "src" / "index.ts", target / PLUGIN_REL))
+            logs.append(ensure_package_json(target))
+        else:
+            logs.append("skip  插件（MCP 模式默认不装；--plugin 安装文件监听插件）")
         skills_src = HERE / "skills" / "graphgen"
         if skills_src.is_dir():
             dst = target / ".opencode" / "skills" / "graphgen"
@@ -160,24 +463,100 @@ def main() -> int:
         logs.append(copy_file(HERE / "tools" / "doclint.py", target / "tools" / "doclint.py"))
         logs.append(copy_file(HERE / "tools" / "gen_doc_slice.py", target / "tools" / "gen_doc_slice.py"))
         logs.append(ensure_doclint_config(target))
-        logs.append(ensure_package_json(target))
-        if args.hooks:
+        logs.append(copy_file(HERE / "tools" / "repo.py", target / "tools" / "repo.py"))
+        logs.append(copy_file(
+            HERE / "tools" / "repo.config.template.json",
+            target / "tools" / "repo.config.template.json",
+        ))
+        logs.append(ensure_repo_config(target))
+        vcs_logs, vcs_rc = ensure_vcs(target, opts)
+        logs.extend(vcs_logs)
+        if vcs_rc != 0:
+            failed = True
+        if opts.hooks:
             logs.extend(install_hooks(target))
         else:
             logs.append("skip  钩子（未加 --hooks）")
-        if args.no_agents:
+        if not opts.agents:
             logs.append("skip  AGENTS.md（--no-agents）")
         else:
             logs.append(append_agents_snippet(target))
     except OSError as e:
-        print(f"install: 失败 {e}")
-        return 1
+        logs.append(f"install: 失败 {e}")
+        failed = True
 
-    print(f"install -> {target}")
-    for line in logs:
+    return {
+        "ok": not failed,
+        "target": str(target),
+        "logs": logs,
+        "summary": _summarize(logs),
+        "options": _options_dict(opts),
+    }
+
+
+def _options_dict(opts: InstallOptions) -> dict:
+    data = asdict(opts)
+    data["target"] = str(opts.target)
+    return data
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="opencode-graphgen 安装器")
+    ap.add_argument("--target", required=True, help="目标项目根目录")
+    ap.add_argument("--hooks", action="store_true", help="安装 pre-commit/commit-msg 钩子并启用 core.hooksPath")
+    ap.add_argument("--no-agents", action="store_true", help="不创建/不追加目标 AGENTS.md（目标已有自己的工作流时用）")
+    ap.add_argument("--vcs", default="auto", choices=["auto", "git", "hg", "svn", "none"],
+                    help="代码仓库类型（auto=按 git>hg>svn 检测/建库；none=整步跳过）")
+    ap.add_argument("--no-vcs-init", action="store_true", help="没有仓库时不自动建库（只检查并提示）")
+    ap.add_argument("--vcs-remote", default="", help="建库时设置的远端地址（svn 必需）")
+    ap.add_argument("--vcs-branch", default="", help="git 初始分支名（默认取配置 main）")
+    ap.add_argument("--vcs-commit", action="store_true", help="建库后做首次提交（需已配置 git 身份）")
+    ap.add_argument("--vcs-strict", action="store_true", help="缺少可用 VCS 工具时以非 0 退出")
+    ap.add_argument("--no-snapshot", action="store_true", help="不生成部署快照/条目索引")
+    ap.add_argument("--dry-run", action="store_true", help="只打印建库计划，不真正执行")
+    ap.add_argument("--plugin", action="store_true",
+                    help="同时安装文件监听插件（默认 MCP 模式不装；需要保存即重生成时用）")
+    ap.add_argument("--remove-plugin", action="store_true", help="删除目标里已有的 graphgen-watch.ts（迁移到 MCP）")
+    ap.add_argument("--json", action="store_true", help="输出机器可读 JSON（日志也放进 logs）")
+    return ap
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    target = Path(args.target).resolve()
+    opts = InstallOptions(
+        target=target,
+        hooks=args.hooks,
+        agents=not args.no_agents,
+        vcs=args.vcs,
+        vcs_init=not args.no_vcs_init,
+        vcs_remote=args.vcs_remote,
+        vcs_branch=args.vcs_branch,
+        vcs_commit=args.vcs_commit,
+        vcs_strict=args.vcs_strict,
+        snapshot=not args.no_snapshot,
+        dry_run=args.dry_run,
+        plugin=args.plugin,
+        remove_plugin=args.remove_plugin,
+    )
+    report = install_project(target, opts)
+
+    if args.json:
+        # 直接写 UTF-8 字节：MCP/Node 按 utf8 解码，不受 Windows 控制台代码页影响
+        payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+        sys.stdout.buffer.write(payload.encode("utf-8"))
+        sys.stdout.buffer.flush()
+        return 0 if report.get("ok") else 1
+
+    print(f"install -> {report['target']}")
+    for line in report.get("logs", []):
         print("  " + line)
+    if not report.get("ok"):
+        print("install: 失败（详情见上）")
+        return 1
     print("install: OK（skill 若在 .opencode/skills 外还需手动放置；改完文档跑 "
-          "python tools/graphgen.py 与 python tools/doclint.py 验证）")
+          "python tools/graphgen.py 与 python tools/doclint.py 验证；"
+          "仓库体检/快照见 python tools/repo.py status|snapshot）")
     return 0
 
 

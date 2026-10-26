@@ -10,6 +10,23 @@ const exec = promisify(execFile)
 const GRAPHGEN_REL = path.join("tools", "graphgen.py")
 const OUTPUT_REL = path.join("docs", "graph.json")
 const DOCLINT_REL = path.join("tools", "doclint.py")
+const REPO_REL = path.join("tools", "repo.py")
+
+// 常驻记忆：由 context 钩子每轮注入，压缩后依然生效。
+// 关掉：环境变量 GRAPHGEN_AUTO_COMMIT=0
+const AUTO_COMMIT_MEMORY = `## 提交约定（常驻记忆 · 改动后自动提交）
+
+- 完成一批改动后，**你自己提交**，不要让用户再手动 \`git commit\`；用户说“改完/继续/就这样”时同样适用。
+- 提交前先 \`git status --short\`：只 \`git add\` 本次任务动过的文件，**不要**把用户其他未完成的改动、临时产物、密钥（.env 等）一起提交；分不清就先问。
+- 提交信息：有对应文档条目就带条目 ID（如 \`fix(DG-009): ...\`，或正文 \`Refs: DG-009\`）；没有就用 \`chore:\`/\`docs:\` 并在正文说明改了什么。
+- 提交前可跑 \`python tools/repo.py guard --stage commit\`（只读检查）；不要 \`git push\`、不要 amend/rebase 别人的提交、不要改全局 git 配置。
+- 提交后：有条目 ID 时跑 \`python tools/repo.py links\` 刷新条目↔提交索引；发布/部署后再跑 \`python tools/repo.py snapshot\`。
+- 目标不是 git 仓库或本机没有 git 时：跳过提交并在汇报里说明（不要擅自 \`git init\`，除非用户要求）。`
+
+function autoCommitEnabled(): boolean {
+  const v = (process.env.GRAPHGEN_AUTO_COMMIT ?? "1").trim().toLowerCase()
+  return !(v === "0" || v === "off" || v === "false" || v === "no")
+}
 
 function normalizeRel(root: string, file: string): string | null {
   const abs = path.isAbsolute(file) ? file : path.join(root, file)
@@ -19,6 +36,8 @@ function normalizeRel(root: string, file: string): string | null {
 }
 
 function isWatchTarget(rel: string): boolean {
+  // 部署快照是产物，写了不触发生成（否则 snapshot → 重生成 → 再 snapshot 抖）
+  if (rel === "docs/REPO.md") return false
   if (rel.startsWith("docs/") && !rel.startsWith("docs/graph")) return true
   if (rel === "AGENTS.md") return true
   if (rel.startsWith(".opencode/skills/") && rel.endsWith("/SKILL.md")) return true
@@ -56,6 +75,24 @@ async function runDoclint(root: string): Promise<string> {
     const e = err as { stdout?: string; stderr?: string; code?: number }
     const out = (e.stdout ?? "") + (e.stderr ? `\n[stderr]\n${e.stderr}` : "")
     if (typeof e.code === "number") return out.trim() || `doclint exit ${e.code}`
+    throw err
+  }
+}
+
+async function runRepo(root: string, args: string[]): Promise<string> {
+  const script = path.join(root, REPO_REL)
+  if (!existsSync(script)) throw new Error(`repo script not found: ${script}（先运行 install.py）`)
+  try {
+    const { stdout, stderr } = await exec("python", [REPO_REL, ...args, "--root", root], {
+      cwd: root,
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+      windowsHide: true,
+    })
+    return (stdout || "") + (stderr ? `\n[stderr]\n${stderr}` : "")
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; code?: number }
+    const out = (e.stdout ?? "") + (e.stderr ? `\n[stderr]\n${e.stderr}` : "")
+    if (typeof e.code === "number") return out.trim() || `repo exit ${e.code}`
     throw err
   }
 }
@@ -211,7 +248,77 @@ export default Plugin.define({
           return { content: lines.join("\n") }
         },
       })
+
+      // repo_query：代码仓库管理（git/hg/svn 统一，tools/repo.py 驱动）
+      editor.add({
+        name: "repo_query",
+        description:
+          "代码仓库管理（git/hg/svn 统一，tools/repo.py 驱动）。action=status: 体检（分支/HEAD/远端/工作区/上游）；action=init: 建库（默认 git init -b main，svn 需 remote）；action=snapshot: 生成部署快照 docs/repo.json|REPO.md（AUTO-GENERATED）；action=links: 扫描提交建立「文档条目↔提交」索引（graphgen 里表现为 COMMIT 节点 + touches 边）；action=guard: 提交/提交信息/推送护栏（只读，不执行 add/commit/push）。",
+        input: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["status", "init", "snapshot", "links", "guard"],
+              description: "status=体检; init=建库; snapshot=部署快照; links=条目↔提交; guard=护栏",
+            },
+            vcs: {
+              type: "string",
+              enum: ["auto", "git", "hg", "svn"],
+              description: "init 用：auto 按 git>hg>svn 取可用工具（默认 auto）",
+            },
+            remote: { type: "string", description: "init 用：远端地址（svn 必需）" },
+            branch: { type: "string", description: "init 用：git 初始分支（默认 main）" },
+            commit: { type: "boolean", description: "init 用：建库后做首次提交（需已配置 git 身份，默认否）" },
+            stage: {
+              type: "string",
+              enum: ["commit", "commit-msg", "push"],
+              description: "guard 用：检查阶段（默认 commit）",
+            },
+            messageFile: { type: "string", description: "guard --stage=commit-msg 用：提交信息文件路径" },
+            maxCommits: { type: "number", description: "links 用：最多扫描的提交数（默认取配置 300）" },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+        execute: async (input) => {
+          const a = input as {
+            action: "status" | "init" | "snapshot" | "links" | "guard"
+            vcs?: "auto" | "git" | "hg" | "svn"
+            remote?: string
+            branch?: string
+            commit?: boolean
+            stage?: "commit" | "commit-msg" | "push"
+            messageFile?: string
+            maxCommits?: number
+          }
+          const args: string[] = [a.action]
+          if (a.action === "init") {
+            args.push("--vcs", a.vcs ?? "auto")
+            if (a.remote) args.push("--remote", a.remote)
+            if (a.branch) args.push("--branch", a.branch)
+            if (a.commit) args.push("--commit")
+          } else if (a.action === "links") {
+            if (a.maxCommits) args.push("--max", String(a.maxCommits))
+          } else if (a.action === "guard") {
+            args.push("--stage", a.stage ?? "commit")
+            if (a.messageFile) args.push("--message-file", a.messageFile)
+          }
+          const out = await runRepo(root, args)
+          return { content: out.trim() || "repo: OK" }
+        },
+      })
     })
+
+    // 常驻记忆：每轮主请求注入「改完自动提交」。
+    // 放在 context 钩子而不是只放 compaction，压缩前后都生效。
+    if (autoCommitEnabled()) {
+      await ctx.session.hook("context", (event) => {
+        const marker = "提交约定（常驻记忆"
+        if (event.system.some((part) => part.type === "text" && part.text.includes(marker))) return
+        event.system.push({ type: "text", text: AUTO_COMMIT_MEMORY })
+      })
+    }
 
     // compaction 摘要请求注入“graphgen_query 必须保持可用”提示
     await ctx.session.hook("compaction", (event) => {
@@ -226,9 +333,20 @@ export default Plugin.define({
   - action=doclint：文档漂移机械校验（tools/doclint.py，有错 exit 1）
   图谱由 tools/graphgen.py 生成，GRAPH.md 禁手改。
 
+- **repo_query**：代码仓库管理（git/hg/svn 统一，tools/repo.py 驱动）。
+  - action=status：体检（分支/HEAD/远端/工作区/上游）
+  - action=snapshot：重新生成部署快照 docs/repo.json|REPO.md（doclint R8 校验其新鲜度）
+  - action=links：重建条目↔提交索引（之后 graphgen_query node=DG-009 能列出相关提交）
+  - action=guard：提交/提交信息/推送护栏（只读，不执行 add/commit/push）
+  - action=init：建库（默认 git init -b main；svn 需 remote）
+
 - **skill 工具**：可加载 graphgen 技能（查反链/跑生成器/防漂移的详细指南）。
   当需要查某个条目被哪些文档引用、某份文档的回归清单覆盖哪些条目、
-  或改完文档后确认图谱同步/防漂移通过时，必须使用 graphgen_query 或加载 graphgen 技能。`,
+  或改完文档后确认图谱同步/防漂移通过时，必须使用 graphgen_query 或加载 graphgen 技能。${
+    autoCommitEnabled()
+      ? "\n\n- **提交约定（常驻）**：改完自己提交（见常驻记忆），不要等用户手动 commit。"
+      : ""
+  }`,
       })
     })
 

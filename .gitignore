@@ -1,5 +1,7 @@
 /node_modules/
 /dist/
+/mcp/config.json
+/mcp/config.local.json
 /.idea/
 /.vscode/
 **/__pycache__/

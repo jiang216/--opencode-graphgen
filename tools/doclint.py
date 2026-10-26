@@ -10,6 +10,8 @@
   R6 凭据：scan glob 内禁止密钥赋值/散列（可配 ban 黑名单）
   R7 变更日志：条目编号连续（按前缀）、日期（YYYY-MM-DD）、
      requireHistory 里 {前缀: 起始编号} 起必须含「相关历史条目」
+  R8 部署快照：docs/repo.json 记录的 HEAD 必须等于当前 HEAD（防部署漂移；
+     提交钩子里用 DOCLINT_SKIP_R8=1 跳过，因为提交本身会让快照变旧）
   markers：生成块 marker 内容 == 生成器输出（gen_doc_slice --write）
 
 配置：默认读 <项目>/tools/doclint.config.json，可用 --config 指定。
@@ -22,7 +24,9 @@ from __future__ import annotations
 import argparse
 import glob as globmod
 import json
+import os
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -523,6 +527,66 @@ def check_changelog(root: Path, cfg: dict) -> list[str]:
     return errs
 
 
+# ---------------------------------------------------------------- R8
+def _vcs_head(root: Path) -> str:
+    """当前 HEAD（短）。优先调用 tools/repo.py，git/hg/svn 一套逻辑。"""
+    repo_py = root / "tools" / "repo.py"
+    if not repo_py.is_file():
+        return ""
+    kwargs: dict = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    try:
+        r = subprocess.run(
+            [sys.executable, str(repo_py), "status", "--root", str(root), "--json"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, **kwargs,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if r.returncode != 0:
+        return ""
+    try:
+        return str((json.loads(r.stdout) or {}).get("headShort") or "")
+    except json.JSONDecodeError:
+        return ""
+
+
+def check_repo_snapshot(root: Path, cfg: dict) -> list[str]:
+    ok, r = rule(cfg, "R8")
+    if not ok:
+        return []
+    # 快照记录的是「生成那一刻的 HEAD」，提交本身必然让它变旧：
+    # 所以 R8 是发布/部署/CI 的检查项，提交钩子里用 DOCLINT_SKIP_R8=1 跳过。
+    if os.environ.get("DOCLINT_SKIP_R8", "").strip().lower() in ("1", "true", "yes", "on"):
+        return []
+    snap_json = r.get("json", "docs/repo.json")
+    snap_md = r.get("snapshot", "docs/REPO.md")
+    jp = root / snap_json
+    if not jp.is_file():
+        return [f"R8 缺少部署快照 {snap_json}（先运行 python tools/repo.py snapshot）"]
+    try:
+        snap = json.loads(read(jp))
+    except (OSError, json.JSONDecodeError) as e:
+        return [f"R8 快照解析失败 {snap_json}: {e}"]
+    head = _vcs_head(root)
+    if not head:
+        return []  # 没有仓库 / 没有可用 VCS：不误报
+    recorded = str(snap.get("headShort") or snap.get("head") or "")
+    errs: list[str] = []
+    if recorded != head:
+        errs.append(
+            f"R8 部署快照过期：{snap_json} 记录 {recorded or '(空)'}，当前 HEAD {head}"
+            "（重跑 python tools/repo.py snapshot）"
+        )
+    md = root / snap_md
+    if not md.is_file():
+        errs.append(f"R8 缺少人读快照 {snap_md}（重跑 python tools/repo.py snapshot）")
+    elif recorded and recorded not in read(md):
+        errs.append(f"R8 {snap_md} 与 {snap_json} 不一致（重跑 python tools/repo.py snapshot）")
+    return errs
+
+
 # ---------------------------------------------------------------- main
 def run(root: Path, cfg: dict) -> list[str]:
     errs: list[str] = []
@@ -533,6 +597,7 @@ def run(root: Path, cfg: dict) -> list[str]:
     errs += check_whitelist(root, cfg)
     errs += check_credentials(root, cfg)
     errs += check_changelog(root, cfg)
+    errs += check_repo_snapshot(root, cfg)
     errs += check_markers(root, cfg)
     return list(dict.fromkeys(errs))
 

@@ -1,0 +1,26 @@
+{
+  "_comment": "graphgen MCP 配置。engineRoot 相对本文件所在目录解析；安装器会自动写成 ../engine。",
+  "engineRoot": "../engine",
+  "python": "auto",
+  "defaultRoot": ".",
+  "timeoutSec": 180,
+  "autoDeploy": true,
+  "deploy": {
+    "vcs": "auto",
+    "vcsInit": true,
+    "vcsCommit": false,
+    "snapshot": true,
+    "agents": true,
+    "hooks": false,
+    "plugin": false,
+    "removePlugin": false,
+    "vcsRemote": "",
+    "vcsBranch": ""
+  },
+  "memory": {
+    "autoCommit": true
+  },
+  "guard": {
+    "allowPush": false
+  }
+}
