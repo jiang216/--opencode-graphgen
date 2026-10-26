@@ -390,7 +390,7 @@ async function main() {
   }
 
   const installDir = args.link ? SOURCE : path.resolve(args.installDir || defaultInstallDir());
-  if (!args.link && !args.uninstall) {
+  if (!args.link && !args.uninstall && !args.doctor) {
     const rel = path.relative(SOURCE, installDir);
     if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) {
       throw new Error(`--install-dir 不能是仓库或仓库子目录: ${installDir}（开发用 --link）`);
