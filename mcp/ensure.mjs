@@ -1,7 +1,12 @@
 // graphgen MCP —— 部署判定、自动补引擎、并发锁
 import fs from "node:fs";
 import path from "node:path";
-import { isInside } from "./config.mjs";
+import {
+  inspectIdentity,
+  isInside,
+  normalizeIdentity,
+  rememberedIdentity,
+} from "./config.mjs";
 import { runInstall, runRepo, sha256File } from "./bridge.mjs";
 
 // install.py 默认会复制到目标项目的文件（hooks 是可选步骤，不参与“是否已安装”判断）
@@ -334,6 +339,7 @@ export function inspectProject(cfg, root) {
       path.join(root, ".opencode/skills/graphgen/SKILL.md"),
     ),
     agents: fs.existsSync(path.join(root, "AGENTS.md")),
+    identity: inspectIdentity(cfg),
   };
   info.conflicts = inspectConflicts(cfg, root, info);
   return info;
@@ -345,6 +351,8 @@ export function deployFlags(options) {
   if (options.vcsRemote) flags.push("--vcs-remote", options.vcsRemote);
   if (options.vcsBranch) flags.push("--vcs-branch", options.vcsBranch);
   if (options.vcsCommit) flags.push("--vcs-commit");
+  if (options.gitName) flags.push("--git-name", options.gitName);
+  if (options.gitEmail) flags.push("--git-email", options.gitEmail);
   if (!options.snapshot) flags.push("--no-snapshot");
   if (!options.agents) flags.push("--no-agents");
   if (options.hooks) flags.push("--hooks");
@@ -392,8 +400,62 @@ export function mergeDeployOptions(cfg, overrides = {}) {
   return { ...cfg.deploy, ...overrides };
 }
 
+/** 写入全局 MCP 配置：只保存 name/email/remember；remember 同时打开自动建库+首次提交。 */
+function persistIdentity(cfg, identity) {
+  if (!cfg.configPath) throw new Error("配置缺少 configPath，无法保存 git 身份");
+  const raw = readJsonSafe(cfg.configPath) || {};
+  raw.identity = {
+    name: identity.name,
+    email: identity.email,
+    remember: true,
+  };
+  raw.deploy = {
+    ...(raw.deploy && typeof raw.deploy === "object" ? raw.deploy : {}),
+    vcsInit: true,
+    vcsCommit: true,
+  };
+  writeJson(cfg.configPath, raw);
+  cfg.identity = { ...raw.identity };
+  cfg.deploy = { ...cfg.deploy, vcsInit: true, vcsCommit: true };
+}
+
+/** 本次部署使用的身份：显式参数优先；否则只复用用户已确认 remember 的身份。 */
+export function resolveDeployIdentity(cfg, options = {}) {
+  const raw = options.identity;
+  if (raw && typeof raw === "object") {
+    const identity = normalizeIdentity(raw);
+    if (identity.name || identity.email) {
+      if (!identity.name || !identity.email) {
+        throw new Error("git 身份不完整：name 和 email 必须同时提供");
+      }
+      return { ...identity, configured: true, configPath: cfg.configPath || null };
+    }
+  }
+  const remembered = rememberedIdentity(cfg);
+  if (remembered) return remembered;
+  return { ...inspectIdentity(cfg), configured: false };
+}
+
 export async function deployProject(cfg, root, options = {}, { force = false } = {}) {
   const opts = mergeDeployOptions(cfg, options);
+  const identity = resolveDeployIdentity(cfg, options);
+  const remember = options.rememberIdentity === true;
+  let needsIdentity = false;
+  if (remember && !identity.configured) {
+    throw new Error(
+      "rememberIdentity=true 但缺少 git 身份：请同时提供 identity.name 和 identity.email",
+    );
+  }
+  // 没有身份时不偷偷建库；先部署工具/文档，再让 agent 询问用户。
+  if (opts.vcs !== "none" && opts.vcsInit && !identity.configured) {
+    opts.vcsInit = false;
+    opts.vcsCommit = false;
+    needsIdentity = true;
+  }
+  if (identity.configured) {
+    opts.gitName = identity.name;
+    opts.gitEmail = identity.email;
+  }
   if (root === cfg.engineRoot || isInside(root, cfg.engineRoot)) {
     throw new Error(`拒绝部署到引擎目录或其子目录: ${root}`);
   }
@@ -438,10 +500,14 @@ export async function deployProject(cfg, root, options = {}, { force = false } =
       }
     }
 
+    if (remember && identity.configured) persistIdentity(cfg, identity);
+
     return {
       ok: true,
       target: root,
       options: opts,
+      identity,
+      needsIdentity,
       report,
       docs: report.docs,
       fsSnapshot,
@@ -472,8 +538,13 @@ export async function ensureEngine(cfg, root, { force = false } = {}) {
   if (!cfg.autoDeploy && !force) {
     return { deployed: false, reason: "autoDeploy=false", info: before };
   }
-  // 首次自动初始化不建 VCS：避免在已有项目里意外 git init。需要仓库时显式 deploy {vcsInit:true}。
-  const autoOptions = { ...cfg.deploy, vcsInit: false };
+  // 已记住身份时才自动建库/首次提交；否则只补工具/文档，避免无身份时建半个仓库。
+  const identity = rememberedIdentity(cfg);
+  const autoOptions = { ...cfg.deploy };
+  if (!identity) {
+    autoOptions.vcsInit = false;
+    autoOptions.vcsCommit = false;
+  }
   try {
     const result = await deployProject(cfg, root, autoOptions, { force });
     return {
@@ -481,6 +552,9 @@ export async function ensureEngine(cfg, root, { force = false } = {}) {
       reason: "deployed",
       info: inspectProject(cfg, root),
       report: result.report,
+      identity: result.identity,
+      needsIdentity:
+        result.needsIdentity || (!identity && cfg.deploy.vcsInit === true),
     };
   } catch (e) {
     if (e?.code === "GRAPHGEN_CONFLICT") {

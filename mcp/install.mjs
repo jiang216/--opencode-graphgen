@@ -202,8 +202,8 @@ function ensureConfig(configPath, engineRoot) {
   if (!data.deploy) {
     data.deploy = {
       vcs: "auto",
-      vcsInit: false,
-      vcsCommit: false,
+      vcsInit: true,
+      vcsCommit: true,
       snapshot: true,
       agents: true,
       hooks: false,
@@ -212,6 +212,11 @@ function ensureConfig(configPath, engineRoot) {
       vcsRemote: "",
       vcsBranch: "",
     };
+  }
+  if (data.deploy.vcsInit === undefined) data.deploy.vcsInit = true;
+  if (data.deploy.vcsCommit === undefined) data.deploy.vcsCommit = true;
+  if (!data.identity || typeof data.identity !== "object") {
+    data.identity = { name: "", email: "", remember: false };
   }
   if (data.autoDeploy === undefined) data.autoDeploy = true;
   if (!data.timeoutSec) data.timeoutSec = 180;

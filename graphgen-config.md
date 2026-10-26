@@ -112,8 +112,9 @@ node mcp\install.mjs --install-dir D:\tools\graphgen-mcp --doctor
 | `python` | `auto` | `python` / `py -3` / 绝对路径 |
 | `autoDeploy` | `true` | 缺引擎时先做冲突预检，无冲突自动部署（`false` 只报告） |
 | `sourceRoot` | 安装时写入 | MCP 源仓库；自动部署跳过它 |
-| `deploy.vcs` / `vcsInit` | `auto` / `false` | 无仓库不自动建库；需要时显式打开 |
-| `deploy.vcsCommit` | `false` | 建库后不自动提交 |
+| `identity.name/email/remember` | `"" / "" / false` | 首次确认后保存的 git 身份；remember=true 时后续项目自动建库，不保存密码 |
+| `deploy.vcs` / `vcsInit` | `auto` / `true` | 有已记住身份时自动建库；没有身份时跳过并提示 |
+| `deploy.vcsCommit` | `true` | 建库后自动首次提交（需身份） |
 | `deploy.hooks` / `plugin` | `false` | 默认不装钩子、不装监听插件 |
 | `deploy.snapshot` / `agents` | `true` | 生成快照 / 追加 AGENTS 片段 |
 

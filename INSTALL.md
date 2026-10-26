@@ -53,6 +53,9 @@ node <本仓库>\mcp\install.mjs --link
 - 之后在任意项目里：`graphgen_status` → `graphgen_deploy {target, confirm:true}`；
   首次调用 `graphgen_query/repo/verify` 会先做冲突预检，无冲突自动补引擎（`autoDeploy: true`），
   有冲突只返回 `conflicts`，确认后加 `force:true`。
+- 首次建库：`status` 发现无 git 身份时，agent 先问 `user.name/user.email`；用户确认“以后都用”后
+  调 `graphgen_deploy {target, confirm:true, identity:{name,email}, rememberIdentity:true}`，
+  配置里只保存 name/email（不保存密码/PAT），后续项目默认建库+首次提交。
 - 详见 [mcp/README.md](mcp/README.md)。
 
 ### 方式 B：统一安装器（无 MCP / 需要离线拷贝）
@@ -93,7 +96,8 @@ python F:\shiyan\CLion\opencode-graphgen\install.py --target D:\code\myapp --hoo
 | `--vcs auto\|git\|hg\|svn\|none` | 建库类型；`auto` 按 git>hg>svn 取可用工具；`none` 整步跳过 |
 | `--no-vcs-init` | 没有仓库时只检查并提示，不建库 |
 | `--vcs-remote URL` / `--vcs-branch NAME` | 建库时设远端 / git 初始分支 |
-| `--vcs-commit` | 建库后首次提交（需已配置 `user.name/user.email`，默认关） |
+| `--git-name NAME` / `--git-email EMAIL` | 建库时写入当前仓库 local 身份（不写全局） |
+| `--vcs-commit` | 建库后首次提交（需 git 身份，默认关） |
 | `--vcs-strict` | 缺 VCS 工具时退出码 1 |
 | `--no-snapshot` / `--dry-run` | 不生成快照索引 / 只打印建库计划 |
 | `--plugin` | 同时安装文件监听插件（默认不装） |

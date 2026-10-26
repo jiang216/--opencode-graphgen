@@ -23,8 +23,9 @@ export const DEFAULT_CONFIG = {
   protectedRoots: [],
   deploy: {
     vcs: "auto",
-    vcsInit: false,
-    vcsCommit: false,
+    // 已有可复用身份时默认建库；没有身份时自动部署会跳过 VCS 并提示先配置。
+    vcsInit: true,
+    vcsCommit: true,
     snapshot: true,
     agents: true,
     hooks: false,
@@ -33,9 +34,35 @@ export const DEFAULT_CONFIG = {
     vcsRemote: "",
     vcsBranch: "",
   },
+  // 只保存 git 提交身份，不保存密码/PAT/SSH passphrase。
+  // remember=true 表示用户确认“以后所有项目都用这组身份建库”，部署时不再询问。
+  identity: { name: "", email: "", remember: false },
   memory: { autoCommit: true },
   guard: { allowPush: false },
 };
+
+/** 归一化 git 身份；只保留 name/email/remember，拒绝其他字段。 */
+export function normalizeIdentity(raw = {}) {
+  const name = typeof raw?.name === "string" ? raw.name.trim() : "";
+  const email = typeof raw?.email === "string" ? raw.email.trim() : "";
+  return { name, email, remember: raw?.remember === true };
+}
+
+/** 当前配置里的身份 + 是否完整。 */
+export function inspectIdentity(cfg) {
+  const identity = normalizeIdentity(cfg?.identity);
+  return {
+    ...identity,
+    configured: !!(identity.name && identity.email),
+    configPath: cfg?.configPath || null,
+  };
+}
+
+/** 只有用户明确“以后都用”且身份完整时，自动部署才直接建库。 */
+export function rememberedIdentity(cfg) {
+  const identity = inspectIdentity(cfg);
+  return identity.remember && identity.configured ? identity : null;
+}
 
 function deepMerge(base, override) {
   if (Array.isArray(base)) return Array.isArray(override) ? override : base;

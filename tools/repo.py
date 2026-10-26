@@ -479,6 +479,17 @@ def _git_identity(root: Path) -> tuple[str, str]:
     return name.strip(), email.strip()
 
 
+def _apply_git_identity(root: Path, name: str, email: str) -> str:
+    """只写当前仓库 local 身份，绝不碰全局 git config。"""
+    rc, _, err = git(root, "config", "--local", "user.name", name)
+    if rc != 0:
+        return f"warn  写入 local user.name 失败：{err}"
+    rc, _, err = git(root, "config", "--local", "user.email", email)
+    if rc != 0:
+        return f"warn  写入 local user.email 失败：{err}"
+    return f"git   local identity = {name} <{email}>（不写全局）"
+
+
 def cmd_init(root: Path, cfg: dict, args: argparse.Namespace) -> tuple[int, dict]:
     info = detect(root)
     vcfg = cfg["vcs"]
@@ -528,6 +539,17 @@ def cmd_init(root: Path, cfg: dict, args: argparse.Namespace) -> tuple[int, dict
                     return 1, result
                 git(root, "symbolic-ref", "HEAD", f"refs/heads/{branch}")
             msgs.append(f"git   git init -b {branch}")
+        git_name = (getattr(args, "git_name", "") or "").strip()
+        git_email = (getattr(args, "git_email", "") or "").strip()
+        if bool(git_name) != bool(git_email):
+            msgs.append("warn  git-name/git-email 必须同时提供，已忽略身份写入")
+        elif git_name and git_email:
+            if dry:
+                msgs.append(
+                    f"git   [dry-run] local identity = {git_name} <{git_email}>"
+                )
+            else:
+                msgs.append(_apply_git_identity(root, git_name, git_email))
         seeded = None if dry else _seed_gitignore(root)
         if seeded:
             msgs.append(f"git   .gitignore 就绪（{seeded}，含部署快照忽略项）")
@@ -1059,7 +1081,9 @@ def main(argv: list[str] | None = None) -> int:
     p_init.add_argument("--vcs", choices=["auto", "git", "hg", "svn"], default="auto")
     p_init.add_argument("--remote", default="", help="远端地址（svn 必需）")
     p_init.add_argument("--branch", default="", help="初始分支名（git，默认 main）")
-    p_init.add_argument("--commit", action="store_true", help="建库后做首次提交（需已配置 git 身份）")
+    p_init.add_argument("--git-name", default="", help="写入当前仓库 local user.name（不写全局）")
+    p_init.add_argument("--git-email", default="", help="写入当前仓库 local user.email（不写全局）")
+    p_init.add_argument("--commit", action="store_true", help="建库后做首次提交（需 git 身份）")
     p_init.add_argument("--allow-nested", action="store_true", help="允许在父仓库内建嵌套库")
     p_init.add_argument("--dry-run", action="store_true")
 

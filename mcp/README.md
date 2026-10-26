@@ -38,8 +38,8 @@ node mcp/install.mjs --link
 
 | 工具 | 作用 | 写盘 |
 |---|---|---|
-| `status` | 服务端/引擎/Python + 目标项目体检（缺失/过期/配置/VCS/快照/旧插件/冲突/下一步建议） | 否 |
-| `deploy` | 部署/同步全家桶；默认只出计划，`confirm=true` 才写；冲突需 `force=true` | 是 |
+| `status` | 服务端/引擎/Python + 目标项目体检（缺失/过期/配置/VCS/快照/旧插件/冲突/git 身份/下一步建议） | 否 |
+| `deploy` | 部署/同步全家桶；默认只出计划，`confirm=true` 才写；冲突需 `force=true`；无身份时返回 `needsIdentity` | 是 |
 | `query` | `query/generate/check/doclint` | `generate` 写产物 |
 | `repo` | `detect/status/init/snapshot/links/guard`；`init` 需 `confirm=true`；无 VCS 自动降级 | 按动作 |
 | `verify` | `graphgen --check` + `doclint` + `repo status` 聚合 | 否 |
@@ -62,7 +62,31 @@ node mcp/install.mjs --link
 - 已有 `AGENTS.md`、被改过的 `tools/graphgen.py`、已有 `docs/graph.json`/快照等：返回 `conflicts`，**不写盘**；确认后 `graphgen_deploy {target, confirm:true, force:true}`；
 - 首次部署若 `docs/CHANGELOG.md` 不存在：自动写一条合法种子条目（默认 `DG-001`，已有前缀则沿用），并补 `prefixes` / `allowOrphanEntries`，让第一次 `generate` 就是 0 errors / 0 warnings；
 - 已有 `docs/CHANGELOG.md` 绝不覆盖/追加；文件存在但没有合法条目时，`docs.ready=false`，不写 `AGENTS.md`，`query generate/check/doclint` 返回 `needsDocs` 提示，而不是裸 Python 错误；
-- `status` 永远只读，返回 `conflicts`、`docs.ready` / `missingEntryFiles` 和 `suggestedNextActions`。
+- `status` 永远只读，返回 `conflicts`、`docs.ready` / `missingEntryFiles`、`identity` 和 `suggestedNextActions`。
+
+### 首次建库与 git 身份
+
+MCP 没有原生弹窗；首次部署时由 agent 在对话里询问：
+
+1. `graphgen_status` 返回 `project.identity.configured=false` / `needsIdentity=true`；
+2. agent 问用户 `user.name`、`user.email`，以及“以后所有项目都用这组信息吗”；
+3. 用户确认后调用：
+
+```text
+graphgen_deploy {
+  target: "<项目>",
+  confirm: true,
+  identity: { name: "<name>", email: "<email>" },
+  rememberIdentity: true
+}
+```
+
+- `rememberIdentity=true`：写入全局 `mcp/config.json`，并把 `deploy.vcsInit` / `deploy.vcsCommit` 打开；以后项目不再询问，直接建库+首次提交。
+- 不传或 `false`：只对当前项目使用，写当前仓库 **local** `user.name/user.email`，不写全局配置，下次还会询问。
+- 没有身份时即使 `vcsInit=true` 也不会偷偷建库：先部署 tools/docs，返回 `needsIdentity`，用户补身份后再部署一次。
+- 只保存 `name` / `email`；**不保存密码、PAT、token、SSH passphrase**。远程凭据交给系统凭据管理器/SSH。
+
+手动修改：编辑 `<install-dir>/mcp/config.json` 的 `identity`，执行 `opencode reload` 后生效。
 
 ## 配置
 
@@ -76,8 +100,13 @@ node mcp/install.mjs --link
   "timeoutSec": 180,
   "autoDeploy": true,
   "sourceRoot": "F:\\shiyan\\CLion\\opencode-graphgen",
+  "identity": {
+    "name": "<git user.name>",
+    "email": "<git user.email>",
+    "remember": true
+  },
   "deploy": {
-    "vcs": "auto", "vcsInit": false, "vcsCommit": false,
+    "vcs": "auto", "vcsInit": true, "vcsCommit": true,
     "snapshot": true, "agents": true, "hooks": false,
     "plugin": false, "removePlugin": false
   },
@@ -88,7 +117,8 @@ node mcp/install.mjs --link
 
 - `autoDeploy=false`：任何工具都不自动写盘，只返回 `needsDeploy` / 计划。
 - `sourceRoot`：MCP 源仓库，自动部署会跳过它，避免把工具仓库本身当消费项目改写。
-- 首次自动部署**不建 VCS**（不会意外 `git init`）；需要仓库时显式 `deploy {vcsInit:true}` 或 `repo init`。
+- `identity.remember=true` 时：自动部署遇到无仓库项目会按 `deploy.vcsInit/vcsCommit` 建库+首次提交，不再询问。
+- 没有已记住身份时：自动部署只补 tools/docs，不偷偷 `git init`；`status` 返回 `needsIdentity`，先问用户。
 - 首次部署前会检查冲突：已有 AGENTS、被修改的工具文件、已有图谱/快照等只提示，确认后加 `force=true`。
 - `deploy.hooks`：默认关；要 pre-commit 硬闸时打开。
 - `deploy.plugin`：默认关；需要“保存即重生成”时打开。

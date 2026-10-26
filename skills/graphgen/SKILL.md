@@ -29,7 +29,7 @@ description: Run the graphgen knowledge-graph generator/linter, the doclint anti
 | `graphgen_verify` | graphgen + doclint + repo status 一次跑完 |
 
 - 新项目缺引擎：先 `graphgen_status`；无冲突时 `query/repo/verify` 自动部署，有冲突只提示，确认后 `graphgen_deploy {target, confirm:true, force:true}`。
-- 自动部署不建 VCS；需要仓库时显式 `repo init` 或 `deploy {vcsInit:true}`。
+- 首次无仓库：`status` 返回 `identity` / `needsIdentity`。先问用户 `user.name/user.email`，确认“以后都用”后 `graphgen_deploy {target, confirm:true, identity:{name,email}, rememberIdentity:true}`；已记住时后续项目自动建库+首次提交。
 - MCP 不做文件监听：改完文档显式 `graphgen_query action=generate`；想保存即重生成再装 `--plugin`。
 - 提交记忆由 MCP `initialize.instructions` 注入（`GRAPHGEN_AUTO_COMMIT=0` 可关）。
 - 没有 MCP 时，下面命令仍全部可用。

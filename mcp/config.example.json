@@ -1,14 +1,19 @@
 {
-  "_comment": "graphgen MCP 配置。engineRoot 相对本文件所在目录解析；安装器会自动写成 ../engine。",
+  "_comment": "graphgen MCP 配置。engineRoot 相对本文件所在目录解析；安装器会自动写成 ../engine。identity 只保存 name/email，不要写密码/PAT。",
   "engineRoot": "../engine",
   "python": "auto",
   "defaultRoot": ".",
   "timeoutSec": 180,
   "autoDeploy": true,
+  "identity": {
+    "name": "",
+    "email": "",
+    "remember": false
+  },
   "deploy": {
     "vcs": "auto",
-    "vcsInit": false,
-    "vcsCommit": false,
+    "vcsInit": true,
+    "vcsCommit": true,
     "snapshot": true,
     "agents": true,
     "hooks": false,

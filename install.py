@@ -73,6 +73,8 @@ class InstallOptions:
     vcs_branch: str = ""
     vcs_commit: bool = False
     vcs_strict: bool = False
+    git_name: str = ""
+    git_email: str = ""
     snapshot: bool = True
     dry_run: bool = False
     plugin: bool = False
@@ -461,6 +463,10 @@ def ensure_vcs(target: Path, opts: InstallOptions) -> tuple[list[str], int]:
             init_args += ["--remote", opts.vcs_remote]
         if opts.vcs_branch:
             init_args += ["--branch", opts.vcs_branch]
+        if opts.git_name:
+            init_args += ["--git-name", opts.git_name]
+        if opts.git_email:
+            init_args += ["--git-email", opts.git_email]
         if opts.vcs_commit:
             init_args.append("--commit")
         if opts.dry_run:
@@ -690,7 +696,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-vcs-init", action="store_true", help="没有仓库时不自动建库（只检查并提示）")
     ap.add_argument("--vcs-remote", default="", help="建库时设置的远端地址（svn 必需）")
     ap.add_argument("--vcs-branch", default="", help="git 初始分支名（默认取配置 main）")
-    ap.add_argument("--vcs-commit", action="store_true", help="建库后做首次提交（需已配置 git 身份）")
+    ap.add_argument("--git-name", default="", help="建库时写入当前仓库 local user.name（不写全局）")
+    ap.add_argument("--git-email", default="", help="建库时写入当前仓库 local user.email（不写全局）")
+    ap.add_argument("--vcs-commit", action="store_true", help="建库后做首次提交（需 git 身份）")
     ap.add_argument("--vcs-strict", action="store_true", help="缺少可用 VCS 工具时以非 0 退出")
     ap.add_argument("--no-snapshot", action="store_true", help="不生成部署快照/条目索引")
     ap.add_argument("--dry-run", action="store_true", help="只打印建库计划，不真正执行")
@@ -714,6 +722,8 @@ def main() -> int:
         vcs_branch=args.vcs_branch,
         vcs_commit=args.vcs_commit,
         vcs_strict=args.vcs_strict,
+        git_name=args.git_name,
+        git_email=args.git_email,
         snapshot=not args.no_snapshot,
         dry_run=args.dry_run,
         plugin=args.plugin,

@@ -1,7 +1,12 @@
 // graphgen MCP —— 工具定义与实现
 import fs from "node:fs";
 import path from "node:path";
-import { isInside, resolvePython, resolveRoot } from "./config.mjs";
+import {
+  isInside,
+  rememberedIdentity,
+  resolvePython,
+  resolveRoot,
+} from "./config.mjs";
 import { runEngine, runRepo } from "./bridge.mjs";
 import {
   ConflictError,
@@ -10,6 +15,7 @@ import {
   ensureEngine,
   inspectProject,
   mergeDeployOptions,
+  resolveDeployIdentity,
   writeFsSnapshot,
 } from "./ensure.mjs";
 
@@ -17,7 +23,7 @@ const TOOL_DEFS = [
   {
     name: "status",
     description:
-      "只读体检：本机 graphgen 引擎位置/Python、目标项目是否已装引擎（缺失/过期文件）、配置/技能/AGENTS/VCS/快照/旧插件，以及 docs.ready / missingEntryFiles。并给出 needsDeploy、conflicts 与 suggestedNextActions。",
+      "只读体检：本机 graphgen 引擎位置/Python、目标项目是否已装引擎（缺失/过期文件）、配置/技能/AGENTS/VCS/快照/旧插件、git 身份（identity.configured/remember），以及 docs.ready / missingEntryFiles。并给出 needsDeploy、conflicts 与 suggestedNextActions。",
     inputSchema: {
       type: "object",
       properties: {
@@ -29,7 +35,7 @@ const TOOL_DEFS = [
   {
     name: "deploy",
     description:
-      "把 graphgen 全家桶部署/同步到目标项目（tools、模板、技能、AGENTS、VCS、快照、可选钩子）。默认只返回计划；confirm=true 才写盘。首次部署先做冲突预检：有冲突返回 needsConfirm=true，确认后加 force=true；只做增量复制/建配置，不删除、不提交、不 push。缺 docs/CHANGELOG.md 时写入合法种子条目并补 prefixes/allowOrphanEntries；已有条目文件不覆盖。",
+      "把 graphgen 全家桶部署/同步到目标项目（tools、模板、技能、AGENTS、VCS、快照、可选钩子）。默认只返回计划；confirm=true 才写盘。首次部署先做冲突预检：有冲突返回 needsConfirm=true，确认后加 force=true；只做增量复制/建配置，不删除、不提交、不 push。缺 docs/CHANGELOG.md 时写入合法种子条目并补 prefixes/allowOrphanEntries；已有条目文件不覆盖。无仓库时：有已记住 git 身份则自动建库+首次提交；缺身份返回 needsIdentity 并跳过 VCS（先问用户 name/email）。",
     inputSchema: {
       type: "object",
       properties: {
@@ -39,10 +45,33 @@ const TOOL_DEFS = [
         dryRun: { type: "boolean", description: "true=强制只出计划" },
         hooks: { type: "boolean", description: "安装 pre-commit/commit-msg 并启用 core.hooksPath" },
         vcs: { type: "string", enum: ["auto", "git", "hg", "svn", "none"] },
-        vcsInit: { type: "boolean", description: "无仓库时是否自动建库（MCP 默认 false；首次自动部署不建库）" },
+        vcsInit: {
+          type: "boolean",
+          description:
+            "无仓库时是否自动建库（默认 true；但没有已记住的 git 身份时会跳过并返回 needsIdentity）",
+        },
         vcsRemote: { type: "string" },
         vcsBranch: { type: "string" },
-        vcsCommit: { type: "boolean", description: "建库后首次提交（默认 false）" },
+        vcsCommit: {
+          type: "boolean",
+          description: "建库后首次提交（默认 true；需要 identity.name/email）",
+        },
+        identity: {
+          type: "object",
+          description:
+            "首次部署时由 agent 询问后传入的 git 提交身份；只含 name/email，禁止传密码/PAT",
+          properties: {
+            name: { type: "string", description: "git user.name" },
+            email: { type: "string", description: "git user.email" },
+          },
+          required: ["name", "email"],
+          additionalProperties: false,
+        },
+        rememberIdentity: {
+          type: "boolean",
+          description:
+            "true=把 identity 写入全局 MCP 配置并打开 vcsInit/vcsCommit，以后项目不再询问",
+        },
         snapshot: { type: "boolean", description: "生成 docs/repo.json + REPO.md（默认 true）" },
         agents: { type: "boolean", description: "追加 AGENTS.md 片段（默认 true）" },
         plugin: { type: "boolean", description: "同时装文件监听插件（默认 false）" },
@@ -87,6 +116,8 @@ const TOOL_DEFS = [
         remote: { type: "string", description: "init 用：远端地址（svn 必需）" },
         branch: { type: "string", description: "init 用：git 初始分支" },
         commit: { type: "boolean", description: "init 用：建库后首次提交" },
+        gitName: { type: "string", description: "init 用：写入当前仓库 local user.name" },
+        gitEmail: { type: "string", description: "init 用：写入当前仓库 local user.email" },
         allowNested: { type: "boolean", description: "init 用：允许在父仓库内建嵌套库" },
         stage: { type: "string", enum: ["commit", "commit-msg", "push"] },
         messageFile: { type: "string", description: "guard --stage=commit-msg 用" },
@@ -198,6 +229,15 @@ export function buildTools(cfg, version) {
         const hasVcsMarker = [".git", ".hg", ".svn"].some((name) =>
           fs.existsSync(path.join(root, name)),
         );
+        const needsIdentity =
+          !hasVcsMarker &&
+          cfg.deploy.vcsInit === true &&
+          !info.identity?.configured;
+        const needsRemember =
+          !hasVcsMarker &&
+          cfg.deploy.vcsInit === true &&
+          info.identity?.configured === true &&
+          info.identity?.remember !== true;
 
         if (!info.engineReady) {
           suggestedNextActions.push(
@@ -243,9 +283,24 @@ export function buildTools(cfg, version) {
           );
         }
         if ((!vcs || (typeof vcs === "object" && !vcs.vcs)) && !hasVcsMarker) {
-          suggestedNextActions.push(
-            "无 VCS：repo status 返回 not_applicable；需要文件快照时用 graphgen_deploy（snapshot=true）",
-          );
+          if (cfg.deploy.vcsInit && !info.identity?.configured) {
+            suggestedNextActions.push(
+              "无 VCS 且未配置 git 身份：先询问用户 user.name/user.email，再 " +
+                `graphgen_deploy {target:${JSON.stringify(root)}, confirm:true, identity:{name,email}, rememberIdentity:true}`,
+            );
+          } else if (cfg.deploy.vcsInit && !info.identity?.remember) {
+            suggestedNextActions.push(
+              "无 VCS：已有 git 身份但未确认“以后都用”；询问用户后可传 rememberIdentity:true 一次写入配置",
+            );
+          } else if (cfg.deploy.vcsInit) {
+            suggestedNextActions.push(
+              "无 VCS：已记住 git 身份，deploy 会自动建库并按配置首次提交",
+            );
+          } else {
+            suggestedNextActions.push(
+              "无 VCS：repo status 返回 not_applicable；需要文件快照时用 graphgen_deploy（snapshot=true）",
+            );
+          }
         }
         return {
           server: {
@@ -260,6 +315,8 @@ export function buildTools(cfg, version) {
           project: {
             ...info,
             vcs,
+            needsIdentity,
+            needsRemember,
             suggestedNextActions,
             autoDeploySkipped: protectedRoots.includes(root)
               ? "source-root"
@@ -289,24 +346,45 @@ export function buildTools(cfg, version) {
         ]) {
           if (args[key] !== undefined) overrides[key] = args[key];
         }
+        if (args.identity !== undefined) overrides.identity = args.identity;
+        if (args.rememberIdentity !== undefined) {
+          overrides.rememberIdentity = args.rememberIdentity === true;
+        }
         const opts = mergeDeployOptions(cfg, overrides);
+        const identity = resolveDeployIdentity(cfg, overrides);
+        const wantsIdentity =
+          opts.vcs !== "none" &&
+          (opts.vcsInit === true || overrides.rememberIdentity === true);
+        const needsIdentity = wantsIdentity && !identity.configured;
         const force = args.force === true;
         const write = args.confirm === true && args.dryRun !== true;
         if (!write) {
           const info = inspectProject(cfg, root);
+          const planOpts = { ...opts };
+          if (needsIdentity) {
+            planOpts.vcsInit = false;
+            planOpts.vcsCommit = false;
+          }
+          if (identity.configured) {
+            planOpts.gitName = identity.name;
+            planOpts.gitEmail = identity.email;
+          }
           return {
             ok: true,
             planned: true,
             target: root,
             engineRoot: cfg.engineRoot,
-            options: opts,
-            flags: deployFlags(opts),
+            options: planOpts,
+            flags: deployFlags(planOpts),
+            identity,
+            needsIdentity,
             info,
             conflicts: info.conflicts,
             needsConfirm: info.conflicts.length > 0,
             safeToAutoDeploy: info.conflicts.length === 0,
-            note:
-              info.conflicts.length > 0
+            note: needsIdentity
+              ? "缺少 git 身份：先询问用户 user.name/user.email；本次不会建库。"
+              : info.conflicts.length > 0
                 ? "检测到冲突：确认覆盖/追加后传 confirm=true, force=true。"
                 : "只出计划，未写盘；确认后传 confirm=true。",
           };
@@ -429,6 +507,11 @@ export function buildTools(cfg, version) {
           argv.push("--vcs", args.vcs || "auto");
           if (args.remote) argv.push("--remote", args.remote);
           if (args.branch) argv.push("--branch", args.branch);
+          const remembered = rememberedIdentity(cfg);
+          const gitName = args.gitName || remembered?.name || "";
+          const gitEmail = args.gitEmail || remembered?.email || "";
+          if (gitName) argv.push("--git-name", gitName);
+          if (gitEmail) argv.push("--git-email", gitEmail);
           if (args.commit) argv.push("--commit");
           if (args.allowNested) argv.push("--allow-nested");
         } else if (action === "links") {
@@ -582,6 +665,7 @@ export function readResource(cfg, uri) {
         "",
         "## 硬性规则",
         "- 新项目缺引擎：直接 `graphgen_deploy {target, confirm:true}`，不要回源仓库手拷。",
+        "- 无 git 身份时先问用户 name/email；确认以后都用后传 `identity` + `rememberIdentity:true`，只存 name/email，不存密码。",
         "- 改完文档：`graphgen_query action=generate`，提交前 `graphgen_verify`。",
         "- 改完一批文件由 agent 自己 commit；只 add 本次改动，不 push、不 amend、不改全局 git config。",
         "- 部署/init 写盘前先出计划；目标不能是引擎目录。",

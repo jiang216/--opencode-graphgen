@@ -69,7 +69,7 @@ python tools/doclint.py             # 文档防漂移
 `install.py` 在安装时顺带管代码仓库，让「需求/文档迭代」和「代码迭代」能对齐：
 
 1. **检测**：`.git`（优先）/`.hg`/`.svn`；多标记并存时全部报告；仅位于父仓库子目录时不建嵌套库。
-2. **建库**：没有仓库且本机有 git → 自动 `git init -b main` + 播种 `.gitignore`（默认不提交、不设远端）；
+2. **建库**：没有仓库且本机有 git → 自动 `git init -b main` + 播种 `.gitignore`（CLI 默认不提交、不设远端；MCP 记住身份后默认首次提交）；
    svn 需 `--vcs-remote <URL>`；本机没有任何 VCS 工具 → 打印安装指引，安装继续。
 3. **部署快照**：`repo.py snapshot` → `docs/repo.json` + `docs/REPO.md`（AUTO-GENERATED，本地部署记录，已 gitignore），doclint **R8** 在发布/CI 检查其新鲜度（提交钩子用 `DOCLINT_SKIP_R8=1` 跳过，避免「提交后快照必然过期」死循环）。
 4. **条目 ↔ 提交**：提交信息带 `DG-009` 这类条目 ID，`repo.py links` → `docs/repo-links.json`；
@@ -78,16 +78,18 @@ python tools/doclint.py             # 文档防漂移
 6. **自动提交记忆**：MCP `initialize.instructions` 每轮注入约定——改完由 agent 自己 `git commit`
    （只提交本次改动文件、带条目 ID、禁止 push），不需要用户每次手动提交；`GRAPHGEN_AUTO_COMMIT=0` 可关闭。
 7. **自动部署**：全局 MCP 对新项目首次调用 `graphgen_query/repo/verify` 时先做冲突预检；
-   空项目或普通业务文件无冲突时自动补齐上述全部能力，已有 AGENTS/工具/图谱等冲突则只提示
-   （默认不装插件、不建 VCS、不提交、不 push）。首次缺 `docs/CHANGELOG.md` 时写入种子条目
-   `DG-001` 并补 `prefixes`/`allowOrphanEntries`，已有条目文件不覆盖。
+   空项目或普通业务文件无冲突时自动补齐上述全部能力，已有 AGENTS/工具/图谱等冲突则只提示。
+   首次部署会检查 git 身份：没有身份时先问用户 `user.name/user.email`，确认“以后都用”后写入
+   MCP 配置，后续项目默认自动建库+首次提交；未确认前不会偷偷 `git init`。
+   首次缺 `docs/CHANGELOG.md` 时写入种子条目 `DG-001` 并补 `prefixes`/`allowOrphanEntries`，已有条目文件不覆盖。
 
 | 开关 | 作用 |
 |------|------|
 | `--vcs auto\|git\|hg\|svn\|none` | 建库类型；`none` 整步跳过 |
 | `--no-vcs-init` | 没有仓库时只提示、不建库 |
 | `--vcs-remote URL` / `--vcs-branch NAME` | 建库时设远端 / 初始分支 |
-| `--vcs-commit` | 建库后首次提交（需已配置 git 身份，默认关） |
+| `--git-name NAME` / `--git-email EMAIL` | 建库时写当前仓库 local 身份（不写全局） |
+| `--vcs-commit` | 建库后首次提交（需 git 身份，默认关） |
 | `--vcs-strict` | 缺 VCS 工具时以非 0 退出 |
 | `--no-snapshot` / `--dry-run` | 不生成快照 / 只打印建库计划 |
 

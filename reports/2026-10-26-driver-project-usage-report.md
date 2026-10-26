@@ -255,6 +255,24 @@ doclint: OK
 自动切出 3–5 条业务种子，也不按项目语言自动检测前缀（默认 `DG`）。这两项保留到 `adopt` 阶段；
 当前项目若已有 `CHANGELOG.md` 但无合法条目，部署器只提示、不擅自改写用户文件。
 
+### 3.10 后续落地：git 身份确认 + 默认建库（2026-10-26）
+
+按“首次建库让用户输入身份、确认后以后项目不再问”的需求，MCP 侧已补：
+
+| 改动 | 行为 |
+|---|---|
+| `mcp/config.json` 新增 `identity` | `{name,email,remember}`；只存 name/email，不存密码/PAT/token |
+| `deploy` 新增 `identity` / `rememberIdentity` | agent 对话询问后传入；`remember=true` 写入全局配置并打开 `vcsInit/vcsCommit` |
+| 无身份时的部署 | 先补 tools/docs，返回 `needsIdentity`，**不偷偷 `git init`** |
+| 已记住身份后的自动部署 | 按 `deploy.vcsInit/vcsCommit` 直接建库 + 首次提交，不再询问 |
+| `install.py` / `repo.py` | 新增 `--git-name/--git-email`，在首次提交前写入当前仓库 **local** 身份，不碰全局 git config |
+| `status` | 返回 `identity.configured/remember`、`needsIdentity` / `needsRemember` 和配置路径，便于 agent 询问 |
+
+验证：`node mcp/mcp-test.mjs` = **PASS=58 / FAIL=0**；覆盖“缺身份不建库、一次性身份、
+remember 后第二个项目自动建库、配置无密码字段”。已同步安装运行时并 `opencode reload`；
+`opencode mcp list` 显示 graphgen connected。当前 `J:\ShiYan\CLion\temp` 仍无身份，
+`status` 返回 `needsIdentity=true`，等待用户提供 `user.name` / `user.email` 后执行首次建库。
+
 ---
 
 ## 4. 原因分析（按"为什么会漏"的层次）

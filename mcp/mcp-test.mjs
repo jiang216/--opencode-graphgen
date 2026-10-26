@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -19,6 +19,9 @@ const CONFLICT = path.join(TMP, "conflict");
 const DOCS = path.join(TMP, "docs-conflict");
 const EXISTING = path.join(TMP, "existing-entry");
 const INVALID = path.join(TMP, "invalid-entry");
+const GITPROJ = path.join(TMP, "git-proj");
+const GITONE = path.join(TMP, "git-one-shot");
+const GITPROJ2 = path.join(TMP, "git-proj-remembered");
 const CONFIG = path.join(TMP, "config.json");
 fs.mkdirSync(PROJ, { recursive: true });
 fs.mkdirSync(AUTO, { recursive: true });
@@ -27,7 +30,13 @@ fs.mkdirSync(CONFLICT, { recursive: true });
 fs.mkdirSync(path.join(DOCS, "docs"), { recursive: true });
 fs.mkdirSync(path.join(EXISTING, "docs"), { recursive: true });
 fs.mkdirSync(path.join(INVALID, "docs"), { recursive: true });
+fs.mkdirSync(GITPROJ, { recursive: true });
+fs.mkdirSync(GITONE, { recursive: true });
+fs.mkdirSync(GITPROJ2, { recursive: true });
 fs.writeFileSync(path.join(AUTO, "README.md"), "# auto project\n");
+fs.writeFileSync(path.join(GITPROJ, "README.md"), "# git project\n");
+fs.writeFileSync(path.join(GITONE, "README.md"), "# one shot\n");
+fs.writeFileSync(path.join(GITPROJ2, "README.md"), "# remembered\n");
 fs.writeFileSync(
   path.join(CONFLICT, "AGENTS.md"),
   "# 项目自有约定\n\n不要覆盖这一行。\n",
@@ -50,8 +59,8 @@ fs.writeFileSync(
       autoDeploy: true,
       deploy: {
         vcs: "auto",
-        vcsInit: false,
-        vcsCommit: false,
+        vcsInit: true,
+        vcsCommit: true,
         snapshot: true,
         agents: true,
         hooks: false,
@@ -503,6 +512,121 @@ try {
         "docs/CHANGELOG.md",
       ),
     invalidCheck.text.slice(0, 180),
+  );
+
+  const noId = body(
+    await call("tools/call", {
+      name: "deploy",
+      arguments: {
+        target: GITPROJ,
+        confirm: true,
+        vcsInit: true,
+        vcsCommit: true,
+      },
+    }),
+  );
+  check(
+    "缺 git 身份时 needsIdentity 且不建库",
+    noId.json?.ok === true &&
+      noId.json?.needsIdentity === true &&
+      !fs.existsSync(path.join(GITPROJ, ".git")),
+    noId.text.slice(0, 180),
+  );
+  const noIdStatus = body(
+    await call("tools/call", { name: "status", arguments: { root: GITPROJ } }),
+  );
+  check(
+    "status 暴露 identity=未配置 / needsIdentity",
+    noIdStatus.json?.project?.identity?.configured === false &&
+      noIdStatus.json?.project?.needsIdentity === true &&
+      typeof noIdStatus.json?.project?.identity?.configPath === "string",
+    JSON.stringify(noIdStatus.json?.project?.identity),
+  );
+
+  const oneShot = body(
+    await call("tools/call", {
+      name: "deploy",
+      arguments: {
+        target: GITONE,
+        confirm: true,
+        vcsInit: true,
+        vcsCommit: true,
+        identity: { name: "One Shot", email: "one@example.invalid" },
+      },
+    }),
+  );
+  const oneEmail = spawnSync(
+    "git",
+    ["-C", GITONE, "config", "--local", "--get", "user.email"],
+    { encoding: "utf8", windowsHide: true },
+  );
+  check(
+    "一次性身份可建库+首次提交",
+    oneShot.json?.ok === true &&
+      fs.existsSync(path.join(GITONE, ".git")) &&
+      oneEmail.status === 0 &&
+      oneEmail.stdout.trim() === "one@example.invalid",
+    oneShot.text.slice(0, 180) + ` email=${oneEmail.stdout?.trim()}`,
+  );
+  const afterOne = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+  check(
+    "一次性身份不写入全局配置",
+    !afterOne.identity?.remember && !afterOne.identity?.name,
+    JSON.stringify(afterOne.identity),
+  );
+
+  const remembered = body(
+    await call("tools/call", {
+      name: "deploy",
+      arguments: {
+        target: GITPROJ,
+        confirm: true,
+        vcsInit: true,
+        vcsCommit: true,
+        identity: { name: "Remembered User", email: "remember@example.invalid" },
+        rememberIdentity: true,
+      },
+    }),
+  );
+  const saved = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+  const head = spawnSync("git", ["-C", GITPROJ, "log", "-1", "--format=%s"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  check(
+    "rememberIdentity 保存配置并建库+首次提交",
+    remembered.json?.ok === true &&
+      fs.existsSync(path.join(GITPROJ, ".git")) &&
+      head.status === 0 &&
+      head.stdout.trim().length > 0,
+    remembered.text.slice(0, 180) + ` head=${head.stdout?.trim()}`,
+  );
+  check(
+    "remember 同时打开 vcsInit/vcsCommit",
+    saved.identity?.remember === true &&
+      saved.identity?.name === "Remembered User" &&
+      saved.deploy?.vcsInit === true &&
+      saved.deploy?.vcsCommit === true,
+    JSON.stringify({ identity: saved.identity, deploy: saved.deploy }),
+  );
+  check(
+    "配置里没有密码/PAT/token",
+    !/password|passwd|pat|token|secret/i.test(JSON.stringify(saved.identity)),
+    JSON.stringify(saved.identity),
+  );
+
+  const autoGit = body(
+    await call("tools/call", {
+      name: "repo",
+      arguments: { action: "status", root: GITPROJ2 },
+    }),
+  );
+  check(
+    "已记住身份后新项目自动建库",
+    autoGit.json?.bootstrap?.deployed === true &&
+      fs.existsSync(path.join(GITPROJ2, ".git")) &&
+      autoGit.json?.result?.result === "ok",
+    autoGit.text.slice(0, 220),
   );
 
   const repo = body(
