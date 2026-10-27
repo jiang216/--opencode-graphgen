@@ -134,3 +134,9 @@ node scripts\release.mjs --zip-only        # 只重打 dist zip
 |------|------|------|
 | openfbx | `F:\shiyan\CLion\openfbx` | graphgen 上游历史仓库，已迁为消费方（`DG-009`） |
 | 3道山商城 code_grbk | `F:\phpstudy_pro\WWW\code_grbk` | ThinkPHP 商城，doclint R1-R7 全开 |
+
+## 许可证
+
+[MIT](LICENSE) © 2026 jiang216
+
+可自由使用、修改、分发、商用，保留版权声明即可；本软件按现状提供，不附带任何担保。
