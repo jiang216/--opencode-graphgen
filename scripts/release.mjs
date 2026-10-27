@@ -334,6 +334,16 @@ function lastTag() {
   return r.ok ? r.out : "";
 }
 
+/** origin 的网页地址（用于没装 gh 时给出手动建 Release 的链接）。 */
+function remoteWebUrl() {
+  const r = sh("git", ["remote", "get-url", "origin"], { allowFail: true });
+  if (!r.ok || !r.out) return "";
+  let url = r.out.trim().replace(/\.git$/, "");
+  const ssh = /^git@([^:]+):(.+)$/.exec(url);
+  if (ssh) url = `https://${ssh[1]}/${ssh[2]}`;
+  return /^https?:\/\//.test(url) ? url : "";
+}
+
 function buildNotes(version, tag, zipFile) {
   const prev = lastTag();
   const range = prev ? `${prev}..HEAD` : "HEAD";
@@ -383,7 +393,7 @@ function main() {
   log(`版本：${pkg.version} → ${version}${opts.setVersion || opts.bump ? "（将写入 package.json / package-lock.json）" : ""}`);
 
   const tagExists = sh("git", ["rev-parse", "-q", "--verify", `refs/tags/${tag}`], { allowFail: true }).ok;
-  if (tagExists && !opts.force) fail(`tag ${tag} 已存在；确需重建加 --force`);
+  if (tagExists && !opts.force && !opts.dryRun) fail(`tag ${tag} 已存在；确需重建加 --force`);
 
   if (opts.zipOnly) {
     step(`打包 dist/${PKG_NAME}-${version}.zip`);
@@ -464,9 +474,11 @@ function main() {
     );
     log("GitHub Release 已创建");
   } else if (opts.githubRelease) {
-    log("\n未检测到可用的 gh（或未登录），GitHub Release 需手动创建：");
-    log(`  https://github.com/<owner>/<repo>/releases/new?tag=${tag}`);
+    const base = remoteWebUrl();
+    log("\n未检测到可用的 gh（未安装或未登录），GitHub Release 需手动创建：");
+    if (base) log(`  ${base}/releases/new?tag=${tag}`);
     log(`  附件：dist/${path.basename(zipFile)}`);
+    log("  想自动发布：winget install --id GitHub.cli，然后 gh auth login，再重跑本脚本");
   }
 
   log(`\n发布完成：${tag}（${size}）`);
