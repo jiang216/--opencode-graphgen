@@ -25,7 +25,9 @@
     "mcp": "node mcp/server.mjs",
     "mcp:test": "node mcp/mcp-test.mjs",
     "mcp:install": "node mcp/install.mjs",
-    "mcp:doctor": "node mcp/install.mjs --doctor"
+    "mcp:doctor": "node mcp/install.mjs --doctor",
+    "release": "node scripts/release.mjs",
+    "release:dry": "node scripts/release.mjs --dry-run"
   },
   "license": "UNLICENSED",
   "private": true,
