@@ -113,8 +113,9 @@ node scripts\release.mjs --zip-only        # 只重打 dist zip
    排除 `reports/`、`scripts/`、`.github/`，解压后是单层 `opencode-graphgen-<version>/`；
 4. 打 annotated tag `v<version>`，说明按「上个 tag 之后的提交」自动生成（`--notes <file>` 可覆盖）；
 5. `git push` 分支与 tag（`--no-push` 只留本地）；
-6. 本机有 `gh` 且已登录时自动 `gh release create` 并挂上 zip（`--no-github-release` 关闭；
-   没有 `gh` 时打印手动建 Release 的地址）。
+6. 本机有 `gh` 时自动 `gh release create` 并挂上 zip（`--no-github-release` 关闭）。
+   `gh` 若还没 `gh auth login`，会借用 git 凭据助手（GCM）里带 `repo` 权限的 token **单次**调用，
+   不打印也不落盘；两条路都不通时打印手动建 Release 的地址。
 
 同名 tag 已存在会拒绝，确需重建加 `--force`（会删除远程同名 tag 重推）。
 

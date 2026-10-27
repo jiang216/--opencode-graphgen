@@ -42,11 +42,12 @@ function fail(msg) {
   throw new ReleaseError(msg);
 }
 
-function sh(cmd, args, { inherit = false, allowFail = false, cwd = ROOT } = {}) {
+function sh(cmd, args, { inherit = false, allowFail = false, cwd = ROOT, env = null } = {}) {
   const r = spawnSync(cmd, args, {
     cwd,
     encoding: "utf8",
     stdio: inherit ? "inherit" : ["ignore", "pipe", "pipe"],
+    env: env ? { ...process.env, ...env } : process.env,
   });
   if (r.error) fail(`无法执行 ${cmd}：${r.error.message}`);
   if (r.status !== 0 && !allowFail) {
@@ -63,6 +64,24 @@ function sh(cmd, args, { inherit = false, allowFail = false, cwd = ROOT } = {}) 
 function hasCommand(cmd) {
   const r = spawnSync(cmd, ["--version"], { stdio: "ignore" });
   return !r.error && r.status === 0;
+}
+
+/**
+ * 从 git 凭据助手取 GitHub token，仅供本进程单次调用 gh（不打印、不落盘）。
+ * gh 自己登录要求 read:org 权限，而 GCM 里常见的 PAT 只有 repo；用它跑
+ * `gh release create` 足够，于是没做 `gh auth login` 也能自动建 Release。
+ */
+function githubTokenFromGitCredential() {
+  const r = spawnSync("git", ["credential", "fill"], {
+    cwd: ROOT,
+    input: "protocol=https\nhost=github.com\n\n",
+    encoding: "utf8",
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    timeout: 15000,
+  });
+  if (r.error || r.status !== 0) return "";
+  const line = (r.stdout || "").split(/\r?\n/).find((l) => l.startsWith("password="));
+  return line ? line.slice("password=".length).trim() : "";
 }
 
 function log(msg) {
@@ -473,13 +492,26 @@ function main() {
     log("跳过推送（--no-push）");
   }
 
-  const ghReady = opts.githubRelease && hasCommand("gh") && sh("gh", ["auth", "status"], { allowFail: true }).ok;
-  if (ghReady && opts.push) {
-    step(`创建 GitHub Release ${tag}`);
+  let ghEnv = null;
+  let ghMode = "";
+  if (opts.githubRelease && hasCommand("gh")) {
+    if (sh("gh", ["auth", "status"], { allowFail: true }).ok) {
+      ghMode = "gh 已登录";
+    } else {
+      const token = githubTokenFromGitCredential();
+      if (token && sh("gh", ["auth", "status"], { allowFail: true, env: { GH_TOKEN: token } }).ok) {
+        ghEnv = { GH_TOKEN: token };
+        ghMode = "借用 git 凭据助手里的 token";
+      }
+    }
+  }
+
+  if (ghMode && opts.push) {
+    step(`创建 GitHub Release ${tag}（${ghMode}）`);
     sh(
       "gh",
       ["release", "create", tag, zipFile, "--title", `${PKG_NAME} ${tag}`, "--notes-file", notesFile],
-      { inherit: true },
+      { inherit: true, env: ghEnv },
     );
     log("GitHub Release 已创建");
   } else if (opts.githubRelease) {
@@ -487,7 +519,7 @@ function main() {
     log("\n未检测到可用的 gh（未安装或未登录），GitHub Release 需手动创建：");
     if (base) log(`  ${base}/releases/new?tag=${tag}`);
     log(`  附件：dist/${path.basename(zipFile)}`);
-    log("  想自动发布：winget install --id GitHub.cli，然后 gh auth login，再重跑本脚本");
+    log("  想自动发布：装 GitHub CLI（gh auth login，或让 git 凭据里有带 repo 权限的 token）后重跑");
   }
 
   log(`\n发布完成：${tag}（${size}）`);
