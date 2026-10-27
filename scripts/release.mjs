@@ -334,6 +334,14 @@ function lastTag() {
   return r.ok ? r.out : "";
 }
 
+function ensureIdentity() {
+  const email = sh("git", ["config", "user.email"], { allowFail: true });
+  const name = sh("git", ["config", "user.name"], { allowFail: true });
+  if (!email.out || !name.out) {
+    fail("未配置 git 身份（user.name / user.email），无法提交版本号；先配置再发布");
+  }
+}
+
 /** origin 的网页地址（用于没装 gh 时给出手动建 Release 的链接）。 */
 function remoteWebUrl() {
   const r = sh("git", ["remote", "get-url", "origin"], { allowFail: true });
@@ -394,6 +402,7 @@ function main() {
 
   const tagExists = sh("git", ["rev-parse", "-q", "--verify", `refs/tags/${tag}`], { allowFail: true }).ok;
   if (tagExists && !opts.force && !opts.dryRun) fail(`tag ${tag} 已存在；确需重建加 --force`);
+  if (version !== pkg.version) ensureIdentity();
 
   if (opts.zipOnly) {
     step(`打包 dist/${PKG_NAME}-${version}.zip`);
