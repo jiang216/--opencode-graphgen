@@ -11,6 +11,7 @@ v0.3 起以 `mcp/` 服务端为主；改动本仓库工具后，用 MCP `gcgl_de
 - `tools/repo.py` — 仓库适配层；`tools/repo.config.template.json` — 仓库配置模板
 - `skills/graphgen/SKILL.md` — 技能；`templates/` — 配置/钩子/AGENTS 片段模板
 - `install.py` — 统一安装器（可调用 + `--json`）；`bootstrap/` — 旧全局引导器
+- `scripts/release.mjs` — 一键发布（升版本 → 自检 → 打包 → tag → push；有 `gh` 时建 Release）
 - `README.md` / `INSTALL.md` / `graphgen-config.md` / `mcp/README.md` — 对外文档
 
 ## 强制约定
@@ -24,6 +25,8 @@ v0.3 起以 `mcp/` 服务端为主；改动本仓库工具后，用 MCP `gcgl_de
 4. **配置驱动**：`doclint.py` 不得硬编码任何消费项目路径；项目差异一律进该项目的 `tools/doclint.config.json`。
 5. **幂等**：`install.py` / `mcp/install.mjs` 重复执行安全；`AGENTS.md` 片段靠 `<!-- graphgen:installed -->` 防重复追加。
 6. **提交**：完成一批改动后由 agent **自己提交**，不要让用户手动 `git commit`；只 `git add` 本次任务动过的文件，不 push、不 amend 他人提交、不改全局 git 配置；不含 `.env`、密钥、`node_modules/`、`dist/`。
+7. **发布**：发版统一走 `node scripts/release.mjs`（`--bump`/`--dry-run`/`--zip-only`），不要手工打包或手打 tag；
+   它是唯一允许 push 的入口，且只在用户明确要求发版时执行。发版前工作区必须干净。
 
 ## 消费项目
 

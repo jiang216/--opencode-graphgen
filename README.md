@@ -93,6 +93,31 @@ python tools/doclint.py             # 文档防漂移
 | `--vcs-strict` | 缺 VCS 工具时以非 0 退出 |
 | `--no-snapshot` / `--dry-run` | 不生成快照 / 只打印建库计划 |
 
+## 发布版本
+
+一条命令完成「版本号 → 自检 → 打包 → 打 tag → 推送」：
+
+```powershell
+node scripts\release.mjs --bump patch      # 升版本（patch|minor|major）后发布
+node scripts\release.mjs --set-version 0.5.0
+node scripts\release.mjs                   # 用 package.json 当前版本发布
+node scripts\release.mjs --dry-run         # 只打印计划，不写盘/不提交/不推送
+node scripts\release.mjs --zip-only        # 只重打 dist zip
+```
+
+脚本做的事：
+
+1. 前置检查：必须在 git 仓库、`main`/`master` 分支、工作区干净（否则拒绝）；
+2. `node mcp/mcp-test.mjs` 自检（`--no-test` 跳过）；
+3. 打包 `dist/opencode-graphgen-<version>.zip` + `.sha256`——内容取 `git ls-files` 快照，
+   排除 `reports/`、`scripts/`、`.github/`，解压后是单层 `opencode-graphgen-<version>/`；
+4. 打 annotated tag `v<version>`，说明按「上个 tag 之后的提交」自动生成（`--notes <file>` 可覆盖）；
+5. `git push` 分支与 tag（`--no-push` 只留本地）；
+6. 本机有 `gh` 且已登录时自动 `gh release create` 并挂上 zip（`--no-github-release` 关闭；
+   没有 `gh` 时打印手动建 Release 的地址）。
+
+同名 tag 已存在会拒绝，确需重建加 `--force`（会删除远程同名 tag 重推）。
+
 ## 维护约定（本仓库）
 
 - **唯一事实源**：MCP/插件/技能/引擎/doclint/模板只在这里改；消费项目（openfbx、code_grbk 等）一律用
