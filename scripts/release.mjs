@@ -24,6 +24,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import zlib from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -208,12 +209,108 @@ function packageFiles() {
   return files;
 }
 
+/* ------------------------------------------------------ 最小 zip 写入器（跨平台） */
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function dosDateTime(date) {
+  return {
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+    date: ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+  };
+}
+
+function walkFiles(dir, base = "") {
+  const out = [];
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = base ? `${base}/${ent.name}` : ent.name;
+    if (ent.isDirectory()) out.push(...walkFiles(path.join(dir, ent.name), rel));
+    else out.push(rel);
+  }
+  return out;
+}
+
+/** 写 zip：条目统一用正斜杠 + UTF-8 名，解压后恰好一层 `rootName/`。 */
+function writeZip(zipFile, rootName, rootDir) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  const names = walkFiles(rootDir).sort();
+
+  for (const rel of names) {
+    const full = path.join(rootDir, rel);
+    const data = fs.readFileSync(full);
+    const comp = zlib.deflateRawSync(data, { level: 9 });
+    const crc = crc32(data);
+    const { time, date } = dosDateTime(fs.statSync(full).mtime);
+    const name = Buffer.from(`${rootName}/${rel}`, "utf8");
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4); // version needed
+    local.writeUInt16LE(0x0800, 6); // UTF-8 文件名
+    local.writeUInt16LE(8, 8); // deflate
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(comp.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    parts.push(local, name, comp);
+
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(0x02014b50, 0);
+    cd.writeUInt16LE(20, 4); // version made by
+    cd.writeUInt16LE(20, 6); // version needed
+    cd.writeUInt16LE(0x0800, 8);
+    cd.writeUInt16LE(8, 10);
+    cd.writeUInt16LE(time, 12);
+    cd.writeUInt16LE(date, 14);
+    cd.writeUInt32LE(crc, 16);
+    cd.writeUInt32LE(comp.length, 20);
+    cd.writeUInt32LE(data.length, 24);
+    cd.writeUInt16LE(name.length, 28);
+    cd.writeUInt32LE(offset, 42);
+    central.push(Buffer.concat([cd, name]));
+
+    offset += local.length + name.length + comp.length;
+  }
+
+  const cdBuf = Buffer.concat(central);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(names.length, 8);
+  eocd.writeUInt16LE(names.length, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+
+  fs.rmSync(zipFile, { force: true });
+  fs.writeFileSync(zipFile, Buffer.concat([...parts, cdBuf, eocd]));
+  return names.length;
+}
+
 function buildZip(version, files) {
   const distDir = path.join(ROOT, "dist");
   fs.mkdirSync(distDir, { recursive: true });
   const zipFile = path.join(distDir, `${PKG_NAME}-${version}.zip`);
+  const rootName = `${PKG_NAME}-${version}`;
   const stageParent = fs.mkdtempSync(path.join(os.tmpdir(), "graphgen-release-"));
-  const stageRoot = path.join(stageParent, `${PKG_NAME}-${version}`);
+  const stageRoot = path.join(stageParent, rootName);
 
   try {
     for (const rel of files) {
@@ -221,22 +318,8 @@ function buildZip(version, files) {
       fs.mkdirSync(path.dirname(dst), { recursive: true });
       fs.copyFileSync(path.join(ROOT, rel), dst);
     }
-    fs.rmSync(zipFile, { force: true });
-
-    if (process.platform === "win32") {
-      const ps = [
-        "Add-Type -AssemblyName System.IO.Compression.FileSystem;",
-        `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stageParent.replace(/'/g, "''")}',`,
-        ` '${zipFile.replace(/'/g, "''")}',`,
-        " [System.IO.Compression.CompressionLevel]::Optimal, $true)",
-      ].join("");
-      sh(process.env.SystemRoot ? "powershell.exe" : "powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], {
-        cwd: stageParent,
-      });
-    } else {
-      sh("zip", ["-r", "-q", zipFile, `${PKG_NAME}-${version}`], { cwd: stageParent });
-    }
-
+    const count = writeZip(zipFile, rootName, stageRoot);
+    if (count !== files.length) fail(`打包条目数不符：期望 ${files.length}，实际 ${count}`);
     if (!fs.existsSync(zipFile) || fs.statSync(zipFile).size === 0) fail(`打包失败：${zipFile} 未生成或为空`);
     return zipFile;
   } finally {
