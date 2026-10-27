@@ -137,6 +137,6 @@ node scripts\release.mjs --zip-only        # 只重打 dist zip
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 jiang216
+[MIT](LICENSE) © 2026 江小东（研道人）
 
 可自由使用、修改、分发、商用，保留版权声明即可；本软件按现状提供，不附带任何担保。

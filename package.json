@@ -2,6 +2,7 @@
   "name": "opencode-graphgen",
   "version": "0.4.1",
   "description": "opencode 文档图谱（graphgen）+ 文档防漂移（doclint）+ 代码仓库管理（repo）全家桶：MCP 服务端（自动部署/查询/校验/仓库）、可选文件监听插件、技能、引擎、统一安装器",
+  "author": "江小东（研道人）",
   "type": "module",
   "main": "mcp/server.mjs",
   "exports": {
